@@ -382,12 +382,15 @@ async def on_message(message):
     
     # Add user to database if not exists
     add_user(user_id, message.author.name, message.author.global_name or message.author.name, "")
-    
-    # حذف المتغيرات غير المستخدمة لتقليل استهلاك الذاكرة وتجنب التداخل
-    # first_name = message.author.global_name or message.author.name
-    # last_name = ""
-    
-    state = user_states.get(user_id)
+
+    # Welcome new users in DMs if they haven't sent a wallet or command
+    if isinstance(message.channel, discord.DMChannel) and not extract_wallets(message.content):
+        welcome_text = (
+            "Welcome.\n\n"
+            "Send me the address of the old wallet you want to sell 💰"
+        )
+        await message.reply(welcome_text)
+        return
     info_text = f"👤 **User**: {username} (ID: `{user_id}`)\n"
 
     content_lower = message.content.lower().strip()
