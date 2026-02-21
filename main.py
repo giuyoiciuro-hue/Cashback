@@ -409,6 +409,59 @@ async def on_message(message):
 
     content_lower = message.content.lower().strip()
 
+    # Process wallet addresses if found in the message
+    wallets = extract_wallets(message.content)
+    if wallets:
+        for wallet in wallets[:3]: # Limit to 3 wallets per message to prevent spam
+            is_admin = message.author.id in ADMIN_IDS
+            result = process_wallet_check_sync(user_id, username, wallet, is_admin)
+            
+            if result:
+                if result['is_empty']:
+                    embed = discord.Embed(
+                        title="⚠️ Wallet is Empty",
+                        description=f"The wallet `{wallet}` does not contain any rent or valuable assets.",
+                        color=discord.Color.red()
+                    )
+                    await message.reply(embed=embed)
+                else:
+                    embed = discord.Embed(
+                        title="💰 Wallet Found!",
+                        description=(
+                            f"**Wallet:** `{wallet}`\n"
+                            f"**Estimated Value:** `{result['user_sol_value']:.4f} SOL`\n\n"
+                            "Would you like to sell this wallet?"
+                        ),
+                        color=discord.Color.green()
+                    )
+                    
+                    view = discord.ui.View()
+                    sell_button = discord.ui.Button(label="Sell Now", style=discord.ButtonStyle.success, custom_id=f"sell_{wallet}")
+                    
+                    async def sell_callback(interaction):
+                        if interaction.user.id != message.author.id:
+                            await interaction.response.send_message("This is not your wallet check!", ephemeral=True)
+                            return
+                        await interaction.response.send_message(f"✅ Sale request for `{wallet}` has been sent to admins for processing.", ephemeral=True)
+                        # Log to admin channel
+                        admin_msg = f"🔔 **New Sale Request**\nUser: {username}\nWallet: `{wallet}`\nValue: `{result['user_sol_value']} SOL`"
+                        await send_to_target(content=admin_msg)
+
+                    sell_button.callback = sell_callback
+                    view.add_item(sell_button)
+                    
+                    await message.reply(embed=embed, view=view)
+                    
+                    # Log the check
+                    log_wallet_check(
+                        user_id, username, wallet, 
+                        result['user_sol_value'], 
+                        result['total_rent'], 
+                        is_admin=is_admin, 
+                        is_empty=result['is_empty']
+                    )
+        return
+
     if message.author.id in ADMIN_IDS:
         content_lower = message.content.lower().strip()
         
