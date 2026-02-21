@@ -405,9 +405,6 @@ async def on_message(message):
         )
         await message.reply(welcome_text)
         return
-    info_text = f"👤 **User**: {username} (ID: `{user_id}`)\n"
-
-    content_lower = message.content.lower().strip()
 
     # Process wallet addresses if found in the message
     wallets = extract_wallets(message.content)
