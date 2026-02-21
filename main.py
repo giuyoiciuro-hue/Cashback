@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import requests
 import re
 import logging
@@ -53,15 +54,28 @@ ADMIN_IDS = [1455690622412390573]
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+from discord import app_commands
+
+# ... (rest of imports)
+
+# ... (around line 59)
 bot = commands.Bot(command_prefix=['/', ''], intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} commands successfully!")
+    except Exception as e:
+        print(f"❌ Sync failed: {e}")
     print(f'Logged in as {bot.user}')
-    print("Slash commands synced.")
 
-@bot.tree.command(name="start", description="Start using the bot")
+@bot.tree.command(
+    name="start", 
+    description="Start using the bot"
+)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def start_slash(interaction: discord.Interaction):
     """امر البداية (Slash Command)"""
     welcome_text = (
@@ -384,7 +398,7 @@ async def on_message(message):
     add_user(user_id, message.author.name, message.author.global_name or message.author.name, "")
 
     # Welcome new users in DMs if they haven't sent a wallet or command
-    if isinstance(message.channel, discord.DMChannel) and not extract_wallets(message.content):
+    if isinstance(message.channel, discord.DMChannel) and not extract_wallets(message.content) and not message.content.startswith('/'):
         welcome_text = (
             "Welcome.\n\n"
             "Send me the address of the old wallet you want to sell 💰"
@@ -1362,4 +1376,11 @@ def export_keys_to_file():
 if __name__ == "__main__":
     init_database()
     threading.Thread(target=run_flask, daemon=True).start()
-    bot.run(DISCORD_TOKEN)
+    DISCORD_TOKEN = os.getenv('DISCORD_BOT')
+    if not DISCORD_TOKEN:
+        print("❌ Error: DISCORD_BOT token not found in environment variables.")
+    else:
+        try:
+            bot.run(DISCORD_TOKEN)
+        except Exception as e:
+            print(f"❌ Critical Error: {e}")
