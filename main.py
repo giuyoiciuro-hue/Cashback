@@ -23,7 +23,10 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=5000)
+    try:
+        app.run(host='0.0.0.0', port=5000, use_reloader=False)
+    except Exception as e:
+        print(f"Flask Error: {e}")
 
 # ═══════════════════════════════════════════════════════════════
 # إعدادات السجلات - عربية ومختصرة
@@ -63,6 +66,16 @@ async def on_ready():
     # registered, we don't need to sync them every time the bot starts.
     print(f'Logged in as {bot.user}')
     print("Bot is ready and stable.")
+    # Setup background task for keeping the bot alive if needed or other periodic tasks
+    # But do NOT sync tree here as it's the main cause of 429 on startup
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    import traceback
+    logging.error(f"Runtime Error in {event}: {traceback.format_exc()}")
+    if "429 Too Many Requests" in str(traceback.format_exc()):
+        print("Detected 429 Rate Limit. Backing off...")
+        await asyncio.sleep(60) # Simple backoff
 
 @bot.tree.command(
     name="start", 
@@ -1513,5 +1526,13 @@ if __name__ == "__main__":
     else:
         try:
             bot.run(DISCORD_TOKEN)
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                print("❌ Critical Error: 429 Too Many Requests. Cloudflare is blocking the IP.")
+                print("The bot will wait 60 seconds before exiting.")
+                import time
+                time.sleep(60)
+            else:
+                print(f"❌ Critical Discord HTTP Error: {e}")
         except Exception as e:
             print(f"❌ Critical Error: {e}")
