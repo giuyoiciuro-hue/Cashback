@@ -521,7 +521,7 @@ async def on_message(message):
     prefixes = ('/', '!', '.', '')
     # Check if it's a command or wallet address
     content_stripped = message.content.strip()
-    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين']
+    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين', 'rr']
     is_wallet = len(extract_wallets(message.content)) > 0
     
     # Critical fix: Check if it's a command first (with empty prefix allowed)
