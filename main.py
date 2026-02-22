@@ -58,9 +58,11 @@ bot = commands.Bot(command_prefix=['/', ''], intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    # bot.tree.sync() is removed to avoid 429 Too Many Requests errors.
+    # Discord rate limits global command syncing. Since commands are already
+    # registered, we don't need to sync them every time the bot starts.
     print(f'Logged in as {bot.user}')
-    print("Slash commands synced.")
+    print("Bot is ready and stable.")
 
 @bot.tree.command(
     name="start", 
