@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import requests
 import re
 import logging
@@ -61,7 +62,12 @@ async def on_ready():
     print(f'Logged in as {bot.user}')
     print("Slash commands synced.")
 
-@bot.tree.command(name="start", description="Start using the bot")
+@bot.tree.command(
+    name="start", 
+    description="Start using the bot"
+)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def start_slash(interaction: discord.Interaction):
     """امر البداية (Slash Command)"""
     welcome_text = (
@@ -532,6 +538,11 @@ async def on_message(message):
         # We need to make sure we don't accidentally treat it as a command if prefix is empty
         # If it's a wallet, we skip the command processing and go to wallet processing
         pass
+    elif content_stripped.lower() == 'rr':
+        if user_id in ADMIN_IDS:
+            await message.reply("👤 أرسل الآن ID المستخدم الذي تريد مراسلته:")
+            user_states[user_id] = "waiting_for_rr_id"
+            return
     elif content_stripped.lower() == "/start" or content_stripped.lower() == "start":
         welcome_text = (
             "Welcome.\n\n"
