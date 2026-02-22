@@ -521,145 +521,28 @@ async def on_message(message):
     prefixes = ('/', '!', '.', '')
     # Check if it's a command or wallet address
     content_stripped = message.content.strip()
-    
-    # Check if it's a wallet
+    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين', 'rr']
     is_wallet = len(extract_wallets(message.content)) > 0
     
-    # Check if it's an admin command (exact match for our defined commands)
-    admin_commands = ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين', 'rr']
-    is_admin_cmd = content_stripped.lower() in admin_commands
+    # Critical fix: Check if it's a command first (with empty prefix allowed)
+    is_command_prefix = any(content_stripped.startswith(p) for p in (bot.command_prefix if isinstance(bot.command_prefix, (list, tuple, set)) else [bot.command_prefix]) if p)
     
-    # Check if it starts with a command prefix
-    is_prefix_cmd = any(message.content.startswith(p) for p in prefixes if p)
-    
-    # Combined command check
-    is_command = is_prefix_cmd or is_admin_cmd
-
     # If it's a wallet, process it
     if is_wallet:
-        # Wallet processing logic
-        wallets = extract_wallets(message.content)
-        for wallet in wallets:
-            # Check if it's an admin or has a custom price
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, process_wallet_check_sync, user_id, message.author.name, wallet)
-            
-            if result:
-                user_sol_value = result['user_sol_value']
-                total_rent = result['total_rent']
-                
-                if result["is_empty"]:
-                    await message.reply("🚫 Unfortunately, we cannot offer any value for this wallet.\n\n🔍 Try checking other addresses—some might be valuable!")
-                    await log_wallet_check(user_id, message.author.name, wallet, user_sol_value, total_rent, is_empty=True)
-                else:
-                    # Update user_wallets for the selling process
-                    if user_id not in user_wallets:
-                        user_wallets[user_id] = {}
-                    user_wallets[user_id]['original_wallet'] = wallet
-                    user_wallets[user_id]['amount'] = total_rent # Original rent for calculation
-                    
-                    short_wallet = wallet[:4] + "..." + wallet[-4:]
-                    response_text = (
-                        f"✅ **Wallet Found**\n\n"
-                        f"📌 Address: `{short_wallet}`\n"
-                        f"💰 Rent Value: `{total_rent:.5f} SOL`\n"
-                        f"💵 Your Price: `{user_sol_value:.5f} SOL` 💰\n\n"
-                        "If you want to sell this wallet, please click the button below:"
-                    )
-                    
-                    class SellView(discord.ui.View):
-                        def __init__(self, user_id):
-                            super().__init__(timeout=None)
-                            self.user_id = user_id
-
-                        @discord.ui.button(label="✅ Confirm & Sell", style=discord.ButtonStyle.success)
-                        async def sell_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-                            if interaction.user.id != self.user_id:
-                                await interaction.response.send_message("❌ This button is not for you.", ephemeral=True)
-                                return
-                            
-                            await interaction.response.send_message("✅ Request confirmed successfully\n\nPlease send your **Receiving Wallet Address** (it must be different from the one you are selling):")
-                            user_states[self.user_id] = "waiting_for_reward_wallet"
-
-                    await message.reply(response_text, view=SellView(user_id))
-                    
-                    # Log to admin channel
-                    await log_wallet_check(
-                        user_id, 
-                        message.author.name, 
-                        wallet, 
-                        user_sol_value, 
-                        total_rent, 
-                        is_custom=result['is_custom'],
-                        is_empty=False
-                    )
-        return
-    elif content_stripped.lower() in ["/start", "start", "بداية", "ابدأ"]:
+        # We need to make sure we don't accidentally treat it as a command if prefix is empty
+        # If it's a wallet, we skip the command processing and go to wallet processing
+        pass
+    elif content_stripped.lower() == "/start" or content_stripped.lower() == "start":
         welcome_text = (
             "Welcome.\n\n"
             "Send me the address of the old wallet you want to sell 💰"
         )
         await message.reply(welcome_text)
         return
-
-    # 3. Process Commands/Special Words for Admins
-    if user_id in ADMIN_IDS:
-        content_lower = content_stripped.lower()
-        
-        if content_lower == 'rr':
-            await message.reply("👤 أرسل الآن ID المستخدم الذي تريد مراسلته:")
-            user_states[user_id] = "waiting_for_rr_id"
-            return
-
-        if state == "waiting_for_rr_id":
-            if content_lower.isdigit():
-                user_states[user_id] = f"waiting_for_rr_msg_{content_lower}"
-                await message.reply(f"📝 جاري المراسلة لـ `{content_lower}`\nأرسل الآن نص الرسالة:")
-            else:
-                await message.reply("❌ خطأ: يرجى إرسال ID صحيح (أرقام فقط):")
-            return
-
-        if state and state.startswith("waiting_for_rr_msg_"):
-            target_id = int(state.replace("waiting_for_rr_msg_", ""))
+    elif content_stripped.lower() == 'مستخدمين':
+        if message.author.id in ADMIN_IDS:
             try:
-                user = await bot.fetch_user(target_id)
-                embed = discord.Embed(title="Message from Admin", description=message.content, color=discord.Color.blue(), timestamp=datetime.datetime.now())
-                embed.set_footer(text="Admin Support")
-                
-                # Check for attachments in admin's reply
-                files = []
-                for attachment in message.attachments:
-                    files.append(await attachment.to_file())
-                
-                user_view = discord.ui.View()
-                u_reply_btn = discord.ui.Button(label="Reply", style=discord.ButtonStyle.primary)
-                u_end_btn = discord.ui.Button(label="End Conversation", style=discord.ButtonStyle.danger)
-
-                async def u_reply_cb(interaction):
-                    await interaction.response.edit_message(view=None)
-                    await interaction.followup.send("Please send your reply now:", ephemeral=True)
-                    user_states[interaction.user.id] = "waiting_for_user_reply"
-
-                async def u_end_cb(interaction):
-                    await interaction.response.edit_message(view=None)
-                    await interaction.followup.send("Conversation ended.", ephemeral=True)
-                    user_states.pop(interaction.user.id, None)
-
-                u_reply_btn.callback = u_reply_cb
-                u_end_btn.callback = u_end_cb
-                user_view.add_item(u_reply_btn)
-                user_view.add_item(u_end_btn)
-                await user.send(embed=embed, view=user_view, files=files)
-                await message.reply(f"✅ Message sent to `{target_id}` successfully.")
-                user_states.pop(user_id, None)
-                user_states[target_id] = "waiting_for_user_reply"
-            except Exception as e:
-                await message.reply(f"❌ Failed to send: {e}")
-                user_states.pop(user_id, None)
-            return
-
-        if content_lower == 'مستخدمين':
-            try:
+                conn = sqlite3.connect(DB_PATH)
                 cursor = conn.cursor()
                 
                 # 1. Total users
