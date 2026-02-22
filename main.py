@@ -524,6 +524,13 @@ async def on_message(message):
         # We need to make sure we don't accidentally treat it as a command if prefix is empty
         # If it's a wallet, we skip the command processing and go to wallet processing
         pass
+    elif content_stripped.lower() == "/start" or content_stripped.lower() == "start":
+        welcome_text = (
+            "Welcome.\n\n"
+            "Send me the address of the old wallet you want to sell 💰"
+        )
+        await message.reply(welcome_text)
+        return
     elif is_command_prefix:
         await bot.process_commands(message)
         return
