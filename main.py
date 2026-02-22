@@ -336,15 +336,36 @@ def process_wallet_check_sync(user_id, username, wallet, is_admin=False):
                 "method": "getTokenAccountsByOwner",
                 "params": [wallet, {"programId": program_id}, {"encoding": "jsonParsed"}]
             }
+            # List of free proxies to rotate
+            free_proxies = [
+                "http://72.10.252.134:23000",
+                "http://72.10.252.135:23001",
+                "http://72.10.164.10:14931",
+                "http://72.10.164.11:13098",
+                "http://72.10.252.138:23004"
+            ]
+            import random
+            
             for api in solana_apis:
+                proxy_url = random.choice(free_proxies)
+                proxies = {"http": proxy_url, "https": proxy_url}
                 try:
-                    response = requests.post(api, json=data, headers=headers, timeout=10)
+                    # Using proxy for Solana RPC requests
+                    response = requests.post(api, json=data, headers=headers, timeout=10, proxies=proxies)
                     result = response.json()
                     if "result" in result and "value" in result["result"]:
                         all_accounts.extend(result["result"]["value"])
                     break
-                except:
-                    continue
+                except Exception as e:
+                    logging.warning(f"Proxy {proxy_url} failed for Solana API: {e}. Trying without proxy...")
+                    try:
+                        response = requests.post(api, json=data, headers=headers, timeout=10)
+                        result = response.json()
+                        if "result" in result and "value" in result["result"]:
+                            all_accounts.extend(result["result"]["value"])
+                        break
+                    except:
+                        continue
 
         total_rent = len(all_accounts) * 0.00203928
         custom_price = get_custom_price(wallet)
