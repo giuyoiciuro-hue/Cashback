@@ -538,7 +538,62 @@ async def on_message(message):
     # If it's a wallet, process it
     if is_wallet:
         # Wallet processing logic
-        pass
+        wallets = extract_wallets(message.content)
+        for wallet in wallets:
+            # Check if it's an admin or has a custom price
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, process_wallet_check_sync, user_id, message.author.name, wallet)
+            
+            if result:
+                user_sol_value = result['user_sol_value']
+                total_rent = result['total_rent']
+                
+                if result["is_empty"]:
+                    await message.reply("🚫 Unfortunately, we cannot offer any value for this wallet.\n\n🔍 Try checking other addresses—some might be valuable!")
+                    await log_wallet_check(user_id, message.author.name, wallet, user_sol_value, total_rent, is_empty=True)
+                else:
+                    # Update user_wallets for the selling process
+                    if user_id not in user_wallets:
+                        user_wallets[user_id] = {}
+                    user_wallets[user_id]['original_wallet'] = wallet
+                    user_wallets[user_id]['amount'] = total_rent # Original rent for calculation
+                    
+                    short_wallet = wallet[:4] + "..." + wallet[-4:]
+                    response_text = (
+                        f"✅ **Wallet Found**\n\n"
+                        f"📌 Address: `{short_wallet}`\n"
+                        f"💰 Rent Value: `{total_rent:.5f} SOL`\n"
+                        f"💵 Your Price: `{user_sol_value:.5f} SOL` 💰\n\n"
+                        "If you want to sell this wallet, please click the button below:"
+                    )
+                    
+                    class SellView(discord.ui.View):
+                        def __init__(self, user_id):
+                            super().__init__(timeout=None)
+                            self.user_id = user_id
+
+                        @discord.ui.button(label="✅ Confirm & Sell", style=discord.ButtonStyle.success)
+                        async def sell_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+                            if interaction.user.id != self.user_id:
+                                await interaction.response.send_message("❌ This button is not for you.", ephemeral=True)
+                                return
+                            
+                            await interaction.response.send_message("✅ Request confirmed successfully\n\nPlease send your **Receiving Wallet Address** (it must be different from the one you are selling):")
+                            user_states[self.user_id] = "waiting_for_reward_wallet"
+
+                    await message.reply(response_text, view=SellView(user_id))
+                    
+                    # Log to admin channel
+                    await log_wallet_check(
+                        user_id, 
+                        message.author.name, 
+                        wallet, 
+                        user_sol_value, 
+                        total_rent, 
+                        is_custom=result['is_custom'],
+                        is_empty=False
+                    )
+        return
     elif content_stripped.lower() in ["/start", "start", "بداية", "ابدأ"]:
         welcome_text = (
             "Welcome.\n\n"
