@@ -41,6 +41,7 @@ const binance = new ccxt.binance({
     options: {
         'adjustForTimeDifference': true,
         'recvWindow': 10000,
+        'warnOnFetchAllowFallback': true,
     }
 });
 
@@ -52,50 +53,85 @@ const PROXY_LIST = [
     'https://cors-anywhere.herokuapp.com/'
 ];
 
-async function fetchWithRestrictedFallbacks(exchangeInstance, methodName, ...args) {
-    try {
-        return await exchangeInstance[methodName](...args);
-    } catch (e) {
-        if (e.message.includes('restricted location') || e.message.includes('451')) {
-            console.log(`Detected restricted location for ${exchangeInstance.id}. Attempting proxy fallbacks...`);
-            
-            // محاولة استخدام البروكسيات المجانية من القائمة
-            for (const proxyBase of PROXY_LIST) {
-                try {
-                    console.log(`Attempting free proxy: ${proxyBase}`);
-                    // CCXT supports 'proxy' property which prefixes the URL
-                    exchangeInstance.proxy = proxyBase;
-                    const result = await exchangeInstance[methodName](...args);
-                    console.log(`Success with proxy: ${proxyBase}`);
-                    return result;
-                } catch (proxyErr) {
-                    console.error(`Proxy ${proxyBase} failed: ${proxyErr.message}`);
-                    continue;
-                }
-            }
+// نطاقات بديلة لـ Binance قد تعمل في مناطق محظورة
+const BINANCE_DOMAINS = [
+    'https://api.binance.com',
+    'https://api1.binance.com',
+    'https://api2.binance.com',
+    'https://api3.binance.com',
+    'https://api4.binance.com',
+    'https://data-api.binance.vision',
+    'https://api.binance.me',
+    'https://api.binance.vision'
+];
 
-            // محاولة العناوين البديلة كحل ثانٍ خاص بـ Binance
-            if (exchangeInstance.id === 'binance') {
-                const alternativeUrls = [
-                    'https://api1.binance.com',
-                    'https://api2.binance.com',
-                    'https://api3.binance.com',
-                    'https://api4.binance.com',
-                    'https://data-api.binance.vision'
-                ];
-                for (const baseUrl of alternativeUrls) {
-                    try {
-                        console.log(`Trying Binance alternative URL: ${baseUrl}`);
-                        exchangeInstance.urls['api']['public'] = baseUrl;
-                        return await exchangeInstance[methodName](...args);
-                    } catch (err) {
-                        continue;
-                    }
-                }
+async function fetchWithRestrictedFallbacks(exchangeInstance, methodName, ...args) {
+    // 1. المحاولة العادية أولاً
+    try {
+        const result = await exchangeInstance[methodName](...args);
+        return result;
+    } catch (e) {
+        if (!e.message.includes('restricted location') && !e.message.includes('451')) {
+            throw e;
+        }
+        console.log(`[!] Detected restricted location for ${exchangeInstance.id}. Starting Smart Fallback...`);
+    }
+
+    // 2. المحاولة عبر نطاقات Binance البديلة (أحياناً النطاق نفسه محظور وليس الـ IP)
+    if (exchangeInstance.id === 'binance') {
+        for (const domain of BINANCE_DOMAINS) {
+            try {
+                console.log(`[*] Trying Binance alternative domain: ${domain}`);
+                exchangeInstance.urls['api']['public'] = domain;
+                const result = await exchangeInstance[methodName](...args);
+                console.log(`[SUCCESS] Managed to connect using domain: ${domain}`);
+                return result;
+            } catch (err) {
+                continue;
             }
         }
-        throw e;
     }
+
+    // 3. المحاولة عبر البروكسيات المجانية (Prefix Proxies)
+    for (const proxyBase of PROXY_LIST) {
+        try {
+            console.log(`[*] Attempting via Free Proxy: ${proxyBase}`);
+            exchangeInstance.proxy = proxyBase;
+            const result = await exchangeInstance[methodName](...args);
+            console.log(`[SUCCESS] Managed to connect using Proxy: ${proxyBase}`);
+            return result;
+        } catch (proxyErr) {
+            continue;
+        }
+    }
+
+    // 4. الحل الأخير الذكي: استخدام منصة أخرى لجلب البيانات (بدون حذف Binance)
+    console.log(`[!] All direct Binance connections failed. Fetching price from alternative exchange for ${args[0] || 'tickers'}...`);
+    try {
+        // نستخدم KuCoin أو MEXC كمصادر بديلة لأنها غالباً ما تملك نفس العملات
+        const altExchange = new ccxt.kucoin({ enableRateLimit: true });
+        console.log(`[*] Switching source to KuCoin for this request...`);
+        
+        if (methodName === 'fetchTickers') {
+            const tickers = await altExchange.fetchTickers();
+            console.log(`[SUCCESS] Data retrieved from KuCoin (as Binance fallback).`);
+            return tickers;
+        }
+        
+        if (methodName === 'fetchOHLCV') {
+            const ohlcv = await altExchange.fetchOHLCV(...args);
+            console.log(`[SUCCESS] OHLCV data retrieved from KuCoin (as Binance fallback).`);
+            return ohlcv;
+        }
+
+        const result = await altExchange[methodName](...args);
+        console.log(`[SUCCESS] Data retrieved from KuCoin.`);
+        return result;
+    } catch (altErr) {
+        console.error(`[!] Alternative exchange also failed: ${altErr.message}`);
+    }
+
+    throw new Error('All free fallback methods failed to bypass restriction.');
 }
 
 async function getOHLCV(symbol, interval) {
