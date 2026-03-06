@@ -36,7 +36,51 @@ const STABLE_SYMBOLS = [
     'USDT', 'USDC', 'BUSD', 'DAI', 'FDUSD', 'TUSD', 'USDP', 'USDD', 'GUSD', 'FRAX', 'LUSD', 'EURC', 'USDAI'
 ];
 
-const binance = new ccxt.binance({ enableRateLimit: true });
+const binance = new ccxt.binance({ 
+    enableRateLimit: true,
+    options: {
+        'adjustForTimeDifference': true,
+        'recvWindow': 10000,
+    }
+});
+
+// قائمة عناوين البروكسي العامة لتجاوز الحظر الجغرافي
+const PROXY_LIST = [
+    'https://api.allorigins.win/raw?url=',
+    'https://api.codetabs.com/v1/proxy/?quest=',
+    'https://thingproxy.freeboard.io/fetch/',
+    'https://cors-anywhere.herokuapp.com/'
+];
+
+async function fetchWithRestrictedFallbacks(exchangeInstance, methodName, ...args) {
+    try {
+        return await exchangeInstance[methodName](...args);
+    } catch (e) {
+        if (e.message.includes('restricted location') || e.message.includes('451')) {
+            console.log(`Detected restricted location for ${exchangeInstance.id}. Attempting proxy fallbacks...`);
+            // في حالة الحظر الجغرافي، سنحاول استخدام عناوين API بديلة إذا توفرت في CCXT
+            if (exchangeInstance.id === 'binance') {
+                const alternativeUrls = [
+                    'https://api1.binance.com',
+                    'https://api2.binance.com',
+                    'https://api3.binance.com',
+                    'https://api4.binance.com',
+                    'https://data-api.binance.vision'
+                ];
+                for (const baseUrl of alternativeUrls) {
+                    try {
+                        console.log(`Trying Binance alternative URL: ${baseUrl}`);
+                        exchangeInstance.urls['api']['public'] = baseUrl;
+                        return await exchangeInstance[methodName](...args);
+                    } catch (err) {
+                        continue;
+                    }
+                }
+            }
+        }
+        throw e;
+    }
+}
 
 async function getOHLCV(symbol, interval) {
     // Map internal intervals to CCXT intervals
@@ -48,11 +92,9 @@ async function getOHLCV(symbol, interval) {
     };
     const tf = timeframeMap[interval] || '1d';
     
-    // Convert symbol from SYMBOL/USDT to SYMBOL/USDT (CCXT format)
-    // Most symbols in COMMON_SYMBOLS are already in SYMBOL/USDT format
     try {
-        const ohlcv = await binance.fetchOHLCV(symbol, tf, undefined, 100);
-        return ohlcv; // [[timestamp, open, high, low, close, volume], ...]
+        const ohlcv = await fetchWithRestrictedFallbacks(binance, 'fetchOHLCV', symbol, tf, undefined, 100);
+        return ohlcv; 
     } catch (e) {
         console.error(`Error fetching OHLCV for ${symbol} on Binance:`, e.message);
         return null;
@@ -194,7 +236,7 @@ app.get('/analyze-rsi', async (req, res) => {
 
     try {
         console.log('Fetching tickers from Binance...');
-        const tickers = await binance.fetchTickers();
+        const tickers = await fetchWithRestrictedFallbacks(binance, 'fetchTickers');
         const usdtTickers = Object.values(tickers).filter(t => t.symbol && t.symbol.endsWith('/USDT'));
         console.log(`Found ${usdtTickers.length} USDT tickers`);
         const symbols = usdtTickers
@@ -346,7 +388,7 @@ app.get('/analyze', async (req, res) => {
 
     try {
         console.log('Fetching tickers from Binance...');
-        const tickers = await binance.fetchTickers();
+        const tickers = await fetchWithRestrictedFallbacks(binance, 'fetchTickers');
         const usdtTickers = Object.values(tickers).filter(t => t.symbol && t.symbol.endsWith('/USDT'));
         console.log(`Found ${usdtTickers.length} USDT tickers`);
         const symbols = usdtTickers
@@ -606,7 +648,7 @@ app.get('/api/arbitrage', async (req, res) => {
                 return [];
             }
             try {
-                const tickers = await ex.fetchTickers();
+                const tickers = await fetchWithRestrictedFallbacks(ex, 'fetchTickers');
                 const filtered = Object.values(tickers)
                     .filter(t => t.symbol && t.symbol.endsWith('/USDT') && t.bid > 0 && t.ask > 0)
                     .map(t => ({ 
