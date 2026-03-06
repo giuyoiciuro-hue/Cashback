@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Suite</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent: #38bdf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --border: #334155;
+            --hover-bg: #2d3a4f;
+            --dropdown-bg: #1e293b;
+            --sidebar-width: 280px;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            background-color: var(--bg-color); 
+            color: var(--text-primary);
+            line-height: 1.4;
+            overflow-x: hidden;
+        }
+
+        /* Navbar */
+        .navbar {
+            height: 60px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .menu-btn {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-right: 15px;
+        }
+        .menu-btn span {
+            display: block;
+            width: 25px;
+            height: 2px;
+            background-color: var(--text-primary);
+            transition: 0.3s;
+        }
+
+        .nav-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: calc(-1 * var(--sidebar-width));
+            width: var(--sidebar-width);
+            height: 100%;
+            background: var(--card-bg);
+            z-index: 1000;
+            transition: 0.3s ease;
+            box-shadow: 5px 0 15px rgba(0,0,0,0.5);
+            padding-top: 60px;
+            border-right: 1px solid var(--border);
+        }
+        .sidebar.open {
+            left: 0;
+        }
+        .sidebar-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            z-index: 999;
+        }
+        .sidebar-overlay.show {
+            display: block;
+        }
+        .sidebar-item {
+            padding: 15px 25px;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 500;
+        }
+        .sidebar-item:hover {
+            background: var(--hover-bg);
+            color: var(--accent);
+        }
+        .sidebar-item.active {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent);
+            border-left: 4px solid var(--accent);
+        }
+
+        .container { max-width: 1200px; margin: auto; padding: 20px; }
+
+        .section { display: none; }
+        .section.active { display: block; }
+
+        .card {
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 15px;
+            border: 1px solid var(--border);
+        }
+
+        .controls { 
+            display: flex; 
+            flex-direction: row;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .select-wrapper {
+            flex: 1;
+            position: relative;
+            min-width: 150px;
+        }
+
+        .custom-select {
+            position: relative;
+            width: 100%;
+        }
+
+        .select-trigger {
+            width: 100%;
+            font-size: 0.85rem;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+            min-height: 38px;
+        }
+
+        .select-trigger::after {
+            content: "";
+            width: 0;
+            height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 5px solid var(--text-secondary);
+        }
+
+        .options-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background-color: var(--dropdown-bg);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            margin-top: 5px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        }
+
+        .options-menu.show { display: block; }
+
+        .option-item {
+            padding: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: background-color 0.2s;
+            font-size: 0.85rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .option-item:last-child { border-bottom: none; }
+        .option-item:hover { background-color: var(--hover-bg); }
+        .option-item.selected {
+            color: var(--accent);
+            font-weight: bold;
+        }
+        .option-item.selected::after {
+            content: "✓";
+            font-size: 1rem;
+        }
+
+        select {
+            width: 100%;
+            font-size: 0.85rem;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7' /%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 14px;
+            padding-right: 32px;
+            outline: none;
+        }
+
+        button.primary-btn { 
+            border-radius: 8px; 
+            padding: 10px 20px; 
+            background-color: var(--accent); 
+            color: #000; 
+            font-weight: bold;
+            cursor: pointer; 
+            border: none;
+            transition: opacity 0.2s;
+            min-width: 100px;
+        }
+        button.primary-btn:disabled { opacity: 0.5; }
+
+        /* Fixed Table Header CSS */
+        .results-container { 
+            overflow-x: auto; 
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+            position: relative;
+            border-radius: 8px;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: separate; 
+            border-spacing: 0;
+            table-layout: fixed;
+        }
+        th { 
+            position: sticky; 
+            top: 0; 
+            z-index: 20; 
+            background: var(--card-bg); 
+            color: var(--text-secondary); 
+            font-weight: 600; 
+            font-size: 0.75rem; 
+            text-transform: uppercase; 
+            padding: 12px 8px;
+            border-bottom: 2px solid var(--border);
+            text-align: left;
+        }
+        td { 
+            padding: 12px 8px; 
+            text-align: left; 
+            border-bottom: 1px solid var(--border); 
+            font-size: 0.85rem; 
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            background: var(--card-bg);
+        }
+
+        /* Specific column widths for alignment */
+        th:nth-child(1), td:nth-child(1) { width: 35%; }
+        th:nth-child(2), td:nth-child(2) { width: 30%; }
+        th:nth-child(3), td:nth-child(3) { width: 20%; }
+        th:nth-child(4), td:nth-child(4) { width: 15%; text-align: right; }
+        td:nth-child(4) { text-align: right; }
+
+        .symbol-name { 
+            font-weight: bold; 
+            color: var(--accent); 
+            font-size: 0.9rem; 
+            cursor: pointer; 
+            padding: 4px 0;
+            display: inline-block;
+            transition: all 0.2s;
+        }
+        .symbol-name.copied { 
+            color: var(--success);
+            transform: scale(1.02);
+        }
+
+        .price { 
+            font-family: 'Courier New', monospace; 
+            font-weight: 600; 
+            transition: color 0.3s; 
+        }
+
+        .match-badge {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--success);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            border: 1px solid var(--success);
+            margin-right: 4px;
+        }
+        .secondary { color: var(--text-secondary); font-size: 0.75rem; }
+
+        .loading { 
+            display: none; 
+            text-align: center; 
+            padding: 40px 20px; 
+            color: var(--accent);
+        }
+        .empty-state { 
+            text-align: center; 
+            padding: 40px 20px; 
+            color: var(--text-secondary); 
+        }
+
+        /* Arbitrage Cards */
+        .opportunity-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background: rgba(56, 189, 248, 0.1);
+            padding: 12px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .max-diff { 
+            background: var(--success); 
+            color: #000; 
+            padding: 2px 8px; 
+            border-radius: 4px; 
+            font-weight: bold; 
+            font-size: 0.9rem; 
+        }
+        .price-up { color: var(--success); }
+        .price-down { color: var(--danger); }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: var(--accent);
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        @keyframes spin { 
+            0% { transform: rotate(0deg); } 
+            100% { transform: rotate(360deg); } 
+        }
+
+        @media (max-width: 600px) {
+            .controls { flex-direction: column; align-items: stretch; }
+            .select-wrapper { min-width: 100%; }
+            th, td { padding: 10px 5px; font-size: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <button class="menu-btn" id="sidebarToggle">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <div class="nav-title" id="currentViewTitle">Crypto Screener</div>
+    </nav>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-item active" data-section="screener">
+            <span>📊</span> Crypto Screener
+        </div>
+        <div class="sidebar-item" data-section="rsi">
+            <span>📈</span> RSI Screener
+        </div>
+        <div class="sidebar-item" data-section="arbitrage">
+            <span>💱</span> Arbitrage
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Section: Crypto Screener (MACD) -->
+        <div id="screener" class="section active">
+            <div class="card">
+                <div class="controls">
+                    <div class="select-wrapper">
+                        <div class="custom-select" id="multiIntervalSelect">
+                            <div class="select-trigger" id="multiIntervalTrigger">1d (Day)</div>
+                            <div class="options-menu" id="multiIntervalMenu">
+                                <div class="option-item" data-value="1h">1h (Hour)</div>
+                                <div class="option-item" data-value="4h">4h</div>
+                                <div class="option-item selected" data-value="1d">1d (Day)</div>
+                                <div class="option-item" data-value="1w">1w (Week)</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="select-wrapper">
+                        <select id="analysisType">
+                            <option value="macd">Medium Precision</option>
+                            <option value="histogram" selected>High Precision</option>
+                        </select>
+                    </div>
+                    <button id="runScreenerBtn" class="primary-btn">Run Scan</button>
+                </div>
+            </div>
+
+            <div id="screenerLoading" class="loading">
+                <div class="spinner"></div>
+                <div>Scanning Market...</div>
+            </div>
+
+            <div id="screenerContent">
+                <div class="card results-container" id="screenerTableWrapper" style="display:none; padding:0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Coin</th>
+                                <th>Price</th>
+                                <th>Matches</th>
+                                <th>Safety</th>
+                            </tr>
+                        </thead>
+                        <tbody id="screenerResultsBody"></tbody>
+                    </table>
+                </div>
+                <div id="screenerNoResults" class="empty-state">No results found. Click Run to start scanning.</div>
+            </div>
+        </div>
+
+        <!-- Section: RSI Screener -->
+        <div id="rsi" class="section">
+            <div class="card">
+                <div class="controls">
+                    <div class="select-wrapper">
+                        <div class="custom-select" id="rsiIntervalSelect">
+                            <div class="select-trigger" id="rsiIntervalTrigger">1d (Day)</div>
+                            <div class="options-menu" id="rsiIntervalMenu">
+                                <div class="option-item" data-value="1h">1h (Hour)</div>
+                                <div class="option-item" data-value="4h">4h</div>
+                                <div class="option-item selected" data-value="1d">1d (Day)</div>
+                                <div class="option-item" data-value="1w">1w (Week)</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="select-wrapper">
+                        <select id="rsiType">
+                            <option value="20/80">RSI 20/80</option>
+                            <option value="30/70" selected>RSI 30/70</option>
+                        </select>
+                    </div>
+                    <button id="runRsiBtn" class="primary-btn">Run Scan</button>
+                </div>
+            </div>
+
+            <div id="rsiLoading" class="loading">
+                <div class="spinner"></div>
+                <div>Analyzing RSI Patterns...</div>
+            </div>
+
+            <div id="rsiContent">
+                <div class="card results-container" id="rsiTableWrapper" style="display:none; padding:0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Coin</th>
+                                <th>Price</th>
+                                <th>Matches</th>
+                                <th>Safety</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rsiResultsBody"></tbody>
+                    </table>
+                </div>
+                <div id="rsiNoResults" class="empty-state">No results found. Click Run to start scanning.</div>
+            </div>
+        </div>
+
+        <!-- Section: Arbitrage -->
+        <div id="arbitrage" class="section">
+            <div class="card">
+                <div class="controls">
+                    <div style="flex: 1; color: var(--text-secondary); font-size: 0.9rem;">
+                        Scanning for price differences of 1% or more across all supported exchanges.
+                    </div>
+                    <button id="runArbitrageBtn" class="primary-btn">Start Scan</button>
+                </div>
+            </div>
+
+            <div id="arbitrageLoading" class="loading">
+                <div class="spinner"></div>
+                <div>Scanning all exchanges in parallel...</div>
+            </div>
+
+            <div id="arbitrageResults">
+                <div class="empty-state">Click Start Scan to begin</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let updateInterval;
+        async function updatePrices() {
+            const section = document.querySelector('.section.active').id;
+            let results = [];
+            if (section === 'screener') results = await (await fetch('/last-results')).json();
+            else if (section === 'rsi') results = await (await fetch('/rsi-last-results')).json();
+            
+            if (results.length === 0) return;
+
+            const tableBody = section === 'screener' ? document.getElementById('screenerResultsBody') : document.getElementById('rsiResultsBody');
+            if (!tableBody) return;
+
+            results.forEach(res => {
+                const row = Array.from(tableBody.rows).find(r => r.cells[0].innerText.includes(res.symbol));
+                if (row) {
+                    const priceCell = row.cells[1].querySelector('.price');
+                    if (priceCell) {
+                        priceCell.innerText = formatPrice(res.currentPrice);
+                    }
+                }
+            });
+        }
+
+        setInterval(updatePrices, 60000);
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+        const sidebarItems = document.querySelectorAll('.sidebar-item');
+        const sections = document.querySelectorAll('.section');
+        const currentViewTitle = document.getElementById('currentViewTitle');
+
+        function updateActiveSection(sectionId) {
+            sidebarItems.forEach(i => {
+                if (i.getAttribute('data-section') === sectionId) {
+                    i.classList.add('active');
+                    // Get the clean text content
+                    const fullText = i.textContent.trim();
+                    // Extract the text after the emoji/icon
+                    // Use a more robust split that handles multiple spaces or specific characters
+                    const parts = fullText.split(/\s+/);
+                    const textOnly = parts.slice(1).join(' ');
+                    currentViewTitle.innerText = textOnly;
+                } else {
+                    i.classList.remove('active');
+                }
+            });
+            sections.forEach(s => s.classList.toggle('active', s.id === sectionId));
+            
+            if (sectionId === 'screener') loadInitialResults();
+            if (sectionId === 'rsi') loadRsiResults();
+            if (sectionId === 'arbitrage') {
+                if (updateInterval) clearInterval(updateInterval);
+            }
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('open');
+            sidebarOverlay.classList.toggle('show');
+        }
+
+        sidebarToggle.addEventListener('click', toggleSidebar);
+        sidebarOverlay.addEventListener('click', toggleSidebar);
+
+        sidebarItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const sectionId = item.getAttribute('data-section');
+                updateActiveSection(sectionId);
+                toggleSidebar();
+            });
+        });
+
+        function copyToClipboard(text, element) {
+            const originalText = element.innerText;
+            const symbolWithUSDT = text + "USDT";
+            navigator.clipboard.writeText(symbolWithUSDT).then(() => {
+                element.classList.add('copied');
+                element.innerText = '✓ Copied!';
+                setTimeout(() => { 
+                    element.classList.remove('copied'); 
+                    element.innerText = originalText; 
+                }, 1000);
+            });
+        }
+
+        function formatPrice(price) {
+            if (price === 0 || price === null || price === undefined) return '0.00';
+            if (price < 1) return price.toFixed(6);
+            return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        // --- Generic Multi-Select Logic ---
+        function setupMultiSelect(triggerId, menuId, optionsClass, updateCallback) {
+            const trigger = document.getElementById(triggerId);
+            const menu = document.getElementById(menuId);
+            const options = document.querySelectorAll(`.${optionsClass}`);
+            
+            trigger.addEventListener('click', (e) => {
+                menu.classList.toggle('show');
+                e.stopPropagation();
+            });
+
+            options.forEach(opt => {
+                opt.addEventListener('click', (e) => {
+                    updateCallback(opt);
+                    e.stopPropagation();
+                });
+            });
+
+            document.addEventListener('click', () => menu.classList.remove('show'));
+        }
+
+        // --- MACD Screener ---
+        let selectedIntervals = ['1d'];
+        setupMultiSelect('multiIntervalTrigger', 'multiIntervalMenu', 'option-item[data-value]', (opt) => {
+            if (opt.closest('#multiIntervalMenu')) {
+                const val = opt.getAttribute('data-value');
+                if (selectedIntervals.includes(val)) {
+                    if (selectedIntervals.length > 1) {
+                        selectedIntervals = selectedIntervals.filter(i => i !== val);
+                        opt.classList.remove('selected');
+                    }
+                } else {
+                    selectedIntervals.push(val);
+                    opt.classList.add('selected');
+                }
+                document.getElementById('multiIntervalTrigger').innerText = selectedIntervals.join(', ');
+            }
+        });
+
+        const runScreenerBtn = document.getElementById('runScreenerBtn');
+        runScreenerBtn.addEventListener('click', async () => {
+            runScreenerBtn.disabled = true;
+            document.getElementById('screenerLoading').style.display = 'block';
+            document.getElementById('screenerTableWrapper').style.display = 'none';
+            document.getElementById('screenerNoResults').style.display = 'none';
+
+            try {
+                const type = document.getElementById('analysisType').value;
+                await fetch('/save-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ intervals: selectedIntervals, type })
+                });
+
+                const res = await fetch(`/analyze?intervals=${selectedIntervals.join(',')}&type=${type}`);
+                const data = await res.json();
+                renderResults('screenerResultsBody', 'screenerTableWrapper', 'screenerNoResults', data);
+                startRealtimeUpdates();
+            } catch (e) {
+                console.error(e);
+            } finally {
+                runScreenerBtn.disabled = false;
+                document.getElementById('screenerLoading').style.display = 'none';
+            }
+        });
+
+        // --- RSI Screener ---
+        let rsiSelectedIntervals = ['1d'];
+        setupMultiSelect('rsiIntervalTrigger', 'rsiIntervalMenu', 'option-item[data-value]', (opt) => {
+            if (opt.closest('#rsiIntervalMenu')) {
+                const val = opt.getAttribute('data-value');
+                if (rsiSelectedIntervals.includes(val)) {
+                    if (rsiSelectedIntervals.length > 1) {
+                        rsiSelectedIntervals = rsiSelectedIntervals.filter(i => i !== val);
+                        opt.classList.remove('selected');
+                    }
+                } else {
+                    rsiSelectedIntervals.push(val);
+                    opt.classList.add('selected');
+                }
+                document.getElementById('rsiIntervalTrigger').innerText = rsiSelectedIntervals.join(', ');
+            }
+        });
+
+        const runRsiBtn = document.getElementById('runRsiBtn');
+        runRsiBtn.addEventListener('click', async () => {
+            runRsiBtn.disabled = true;
+            document.getElementById('rsiLoading').style.display = 'block';
+            document.getElementById('rsiTableWrapper').style.display = 'none';
+            document.getElementById('rsiNoResults').style.display = 'none';
+
+            try {
+                const type = document.getElementById('rsiType').value;
+                await fetch('/save-rsi-settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ intervals: rsiSelectedIntervals, type })
+                });
+
+                const res = await fetch(`/analyze-rsi?intervals=${rsiSelectedIntervals.join(',')}&type=${type}`);
+                const data = await res.json();
+                renderResults('rsiResultsBody', 'rsiTableWrapper', 'rsiNoResults', data);
+                startRealtimeUpdates();
+            } catch (e) {
+                console.error(e);
+            } finally {
+                runRsiBtn.disabled = false;
+                document.getElementById('rsiLoading').style.display = 'none';
+            }
+        });
+
+        function renderResults(bodyId, wrapperId, emptyId, data) {
+            const body = document.getElementById(bodyId);
+            const wrapper = document.getElementById(wrapperId);
+            const empty = document.getElementById(emptyId);
+
+            if (data && data.length > 0) {
+                body.innerHTML = data.map(item => {
+                    const displaySymbol = item.symbol.replace('USDT', '');
+                    return `
+                    <tr>
+                        <td>
+                            <div class="symbol-name" data-symbol="${item.symbol}" onclick="copyToClipboard('${item.symbol}', this)" style="cursor:pointer;">
+                                ${displaySymbol}<span class="secondary">USDT</span>
+                            </div>
+                        </td>
+                        <td class="price">${formatPrice(item.currentPrice)}</td>
+                        <td>
+                            ${item.matches.map(i => `<span class="match-badge">${i}</span>`).join('')}
+                        </td>
+                        <td style="text-align:right;">
+                            <span style="color: ${item.strength >= 70 ? 'var(--success)' : 'var(--text-secondary)'}; font-weight:bold;">
+                                ${item.strength.toFixed(0)}%
+                            </span>
+                        </td>
+                    </tr>`;
+                }).join('');
+                wrapper.style.display = 'block';
+                empty.style.display = 'none';
+            } else {
+                wrapper.style.display = 'none';
+                empty.style.display = 'block';
+            }
+        }
+
+        // Real-time Price Updates (Binance API)
+        async function startRealtimeUpdates() {
+            if (updateInterval) clearInterval(updateInterval);
+
+            updateInterval = setInterval(async () => {
+                if (document.hidden) return;
+                
+                const activeSection = document.querySelector('.section.active');
+                if (!activeSection || (activeSection.id !== 'screener' && activeSection.id !== 'rsi')) return;
+                
+                const resultsBody = activeSection.querySelector('tbody');
+                if (!resultsBody || !resultsBody.children.length) return;
+
+                try {
+                    const response = await fetch('https://api.binance.com/api/v3/ticker/price');
+                    const prices = await response.json();
+                    const priceMap = new Map(prices.map(p => [p.symbol, p.price]));
+
+                    resultsBody.querySelectorAll('tr').forEach(row => {
+                        const symbolCell = row.querySelector('.symbol-name');
+                        const priceCell = row.querySelector('.price');
+
+                        if (symbolCell && priceCell) {
+                            let sym = symbolCell.getAttribute('data-symbol').toUpperCase();
+                            if (!sym.endsWith('USDT')) sym += 'USDT';
+
+                            const newPriceRaw = priceMap.get(sym);
+                            if (newPriceRaw) {
+                                const newPrice = parseFloat(newPriceRaw);
+                                const oldPrice = parseFloat(priceCell.textContent.replace(/,/g, ''));
+
+                                if (!isNaN(oldPrice)) {
+                                    if (newPrice > oldPrice) priceCell.style.color = 'var(--success)';
+                                    else if (newPrice < oldPrice) priceCell.style.color = 'var(--danger)';
+                                }
+
+                                priceCell.textContent = formatPrice(newPrice);
+
+                                setTimeout(() => { priceCell.style.color = ''; }, 1000);
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error('Price update failed', e);
+                }
+            }, 5000);
+        }
+
+        async function loadInitialResults() {
+            try {
+                const res = await fetch('/last-results');
+                const data = await res.json();
+                renderResults('screenerResultsBody', 'screenerTableWrapper', 'screenerNoResults', data);
+                startRealtimeUpdates();
+            } catch (e) {
+                console.error('Error loading initial results:', e);
+            }
+        }
+
+        async function loadRsiResults() {
+            try {
+                const res = await fetch('/rsi-last-results');
+                const data = await res.json();
+                renderResults('rsiResultsBody', 'rsiTableWrapper', 'rsiNoResults', data);
+                startRealtimeUpdates();
+            } catch (e) {
+                console.error('Error loading RSI results:', e);
+            }
+        }
+
+        // --- Arbitrage ---
+        document.getElementById('runArbitrageBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('runArbitrageBtn');
+            const loading = document.getElementById('arbitrageLoading');
+            const results = document.getElementById('arbitrageResults');
+            
+            btn.disabled = true;
+            loading.style.display = 'block';
+            results.innerHTML = '';
+
+            try {
+                const res = await fetch('/api/arbitrage');
+                const data = await res.json();
+                
+                if (!data.opportunities || data.opportunities.length === 0) {
+                    results.innerHTML = '<div class="empty-state">No opportunities found (>1%). Try again later.</div>';
+                } else {
+                    // Use DocumentFragment or a single join for better performance
+                    const html = data.opportunities.slice(0, 50).map(opp => `
+                        <div class="opportunity-card">
+                            <div class="card-header">
+                                <span style="font-weight:bold; color:var(--accent);">${opp.symbol}</span>
+                                <span class="max-diff">${opp.maxDiff}% Spread</span>
+                            </div>
+                            <div style="padding:15px;">
+                                ${opp.prices.map(p => `
+                                    <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:0.85rem;">
+                                        <span style="color:var(--text-secondary);">${p.exchange.toUpperCase()}</span>
+                                        <span>
+                                            <span style="font-family:monospace; margin-right:10px;">${formatPrice(p.price)}</span>
+                                            <span class="${p.isMin ? 'price-up' : (p.isMax ? 'price-down' : '')}" style="font-size:0.75rem; font-weight:bold;">
+                                                ${p.isMin ? 'BUY' : (p.isMax ? 'SELL' : '+'+p.diff+'%')}
+                                            </span>
+                                        </span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                    results.innerHTML = html;
+                }
+            } catch (e) {
+                results.innerHTML = '<div class="empty-state">Error fetching data.</div>';
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+
+        loadInitialResults();
+    </script>
+</body>
+</html>
